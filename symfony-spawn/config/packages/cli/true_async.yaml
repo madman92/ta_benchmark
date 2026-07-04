@@ -1,0 +1,3 @@
+true_async:
+    db_pool:
+        enabled: false

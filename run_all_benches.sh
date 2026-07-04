@@ -73,8 +73,8 @@ migrate_and_seed() {
     echo "--- Migrating and seeding database for $target ---"
     while [ $i -lt $max_retries ]; do
         if [ "$target" == "symfony-spawn" ]; then
-            if docker compose exec -T "$svc" php bin/console doctrine:migrations:migrate --no-interaction 2>/dev/null && \
-               docker compose exec -T "$svc" php bin/console app:seed 2>/dev/null; then
+            if docker compose exec -T -e APP_ENV=cli "$svc" php bin/console doctrine:migrations:migrate --no-interaction 2>/dev/null && \
+               docker compose exec -T -e APP_ENV=cli "$svc" php bin/console app:seed 2>/dev/null; then
                 echo "Migration & seeding successful."
                 return 0
             fi
