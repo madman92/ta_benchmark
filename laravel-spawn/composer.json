@@ -5,17 +5,11 @@
     "description": "The skeleton application for the Laravel framework.",
     "keywords": ["laravel", "framework"],
     "license": "MIT",
-    "repositories": [
-        {
-            "type": "vcs",
-            "url": "https://github.com/YanGusik/laravel-spawn"
-        }
-    ],
     "require": {
         "php": "^8.6",
         "laravel/framework": "^13.0",
         "laravel/tinker": "^3.0",
-        "yangusik/laravel-spawn": "dev-master"
+        "yangusik/laravel-spawn": "^0.4.3"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

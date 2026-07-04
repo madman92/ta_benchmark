@@ -192,6 +192,8 @@ k6 run k6/fpm.js
 # Octane Swoole
 k6 run k6/octane_swoole.js
 
+k6 run k6/octane_frankenphp.js
+
 # laravel-spawn (TrueAsync FrankenPHP)
 k6 run k6/laravel_spawn.js
 
@@ -203,6 +205,7 @@ BASE_URL=http://localhost:8083 k6 run k6/bench.js
 BASE_URL=http://localhost:8085 k6 run k6/bench.js
 BASE_URL=http://localhost:8084 k6 run k6/bench.js
 BASE_URL=http://localhost:8082 k6 run k6/bench.js
+BASE_URL=http://localhost:8086 k6 run k6/bench.js
 ```
 
 ---

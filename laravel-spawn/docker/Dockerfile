@@ -123,7 +123,8 @@ WORKDIR /usr/src/frankenphp/caddy
 RUN go mod download
 
 WORKDIR /usr/src/frankenphp/caddy/frankenphp
-RUN CGO_CFLAGS="$(php-config --includes)" \
+RUN sed -i 's/XtOffsetOf/offsetof/g' /usr/src/frankenphp/frankenphp_extension.c \
+    && CGO_CFLAGS="$(php-config --includes)" \
     CGO_LDFLAGS="$(php-config --ldflags) $(php-config --libs)" \
     go build -tags "trueasync,nowatcher" -o /usr/local/bin/frankenphp .
 
@@ -154,6 +155,11 @@ COPY opcache.ini /etc/php.d/opcache.ini
 ENV PATH="/usr/local/bin:/usr/local/sbin:${PATH}"
 
 RUN mkdir -p /etc/php.d /etc/caddy /app
+
+# Install Composer
+RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" \
+    && php composer-setup.php --install-dir=/usr/local/bin --filename=composer \
+    && php -r "unlink('composer-setup.php');"
 
 WORKDIR /app
 

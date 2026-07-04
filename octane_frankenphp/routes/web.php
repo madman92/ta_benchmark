@@ -42,7 +42,7 @@ Route::get('/debug/connections', function () {
 });
 
 Route::get('/hello', fn() => response()->json([
-    'message' => 'Hello from Octane Swoole!',
+    'message' => 'Hello from Octane FrankenPHP!',
     'time'    => now()->toIso8601String(),
 ]));
 

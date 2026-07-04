@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "08d0944c30686d2462b037defd7bbc1b",
+    "content-hash": "28fb6c8542240200d88a22dbd9df84c2",
     "packages": [
         {
             "name": "doctrine/collections",
@@ -4216,11 +4216,17 @@
         },
         {
             "name": "yangusik/symfony-spawn",
-            "version": "dev-main",
+            "version": "v0.2.3",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/YanGusik/symfony-spawn.git",
+                "reference": "b758d581c8d74c1db1427f6e367d318961db05d1"
+            },
             "dist": {
-                "type": "path",
-                "url": "/home/yan/projects/symfony-spawn",
-                "reference": "f6144aa323afca90c932f4be874e0954d60ae6db"
+                "type": "zip",
+                "url": "https://api.github.com/repos/YanGusik/symfony-spawn/zipball/b758d581c8d74c1db1427f6e367d318961db05d1",
+                "reference": "b758d581c8d74c1db1427f6e367d318961db05d1",
+                "shasum": ""
             },
             "require": {
                 "ext-pcntl": "*",
@@ -4249,18 +4255,16 @@
                     "Spawn\\Symfony\\": "src/"
                 }
             },
-            "autoload-dev": {
-                "psr-4": {
-                    "Spawn\\Symfony\\Tests\\": "tests/"
-                }
-            },
+            "notification-url": "https://packagist.org/downloads/",
             "license": [
                 "MIT"
             ],
             "description": "Symfony adapter for PHP TrueAsync — async HTTP server with coroutine-per-request isolation",
-            "transport-options": {
-                "relative": false
-            }
+            "support": {
+                "issues": "https://github.com/YanGusik/symfony-spawn/issues",
+                "source": "https://github.com/YanGusik/symfony-spawn/tree/v0.2.3"
+            },
+            "time": "2026-05-21T09:27:29+00:00"
         }
     ],
     "packages-dev": [],
