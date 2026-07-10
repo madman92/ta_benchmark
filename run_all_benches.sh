@@ -8,8 +8,8 @@ RESULTS_FILE="benchmark_results.md"
 
 echo "# Benchmark Results" > "$RESULTS_FILE"
 echo "" >> "$RESULTS_FILE"
-echo "| Framework | Req/s | Median Latency | P95 Latency | Error Rate |" >> "$RESULTS_FILE"
-echo "|---|---|---|---|---|" >> "$RESULTS_FILE"
+echo "| Framework | Req/s | Median Latency | P95 Latency | Error Rate | Dropped |" >> "$RESULTS_FILE"
+echo "|---|---|---|---|---|---|" >> "$RESULTS_FILE"
 
 # The targets correspond to directory names
 declare -a targets=(
@@ -67,21 +67,32 @@ wait_for() {
 }
 
 migrate_and_seed() {
-    local target=$1 svc=$2
+    local target=$1 svc=$2 quick=${3:-0}
     local max_retries=15
     local i=0
-    echo "--- Migrating and seeding database for $target ---"
+    if [ "$quick" -eq 1 ]; then
+        echo "--- Migrating database (quick mode, no seed) for $target ---"
+    else
+        echo "--- Migrating and seeding database for $target ---"
+    fi
     while [ $i -lt $max_retries ]; do
         if [ "$target" == "symfony-spawn" ]; then
             if docker compose exec -T -e APP_ENV=cli "$svc" php bin/console doctrine:migrations:migrate --no-interaction 2>/dev/null && \
-               docker compose exec -T -e APP_ENV=cli "$svc" php bin/console app:seed 2>/dev/null; then
+               { [ "$quick" -eq 1 ] || docker compose exec -T -e APP_ENV=cli "$svc" php bin/console app:seed 2>/dev/null; }; then
                 echo "Migration & seeding successful."
                 return 0
             fi
         else
-            if docker compose exec -T "$svc" php artisan migrate:fresh --seed --force 2>/dev/null; then
-                echo "Migration & seeding successful."
-                return 0
+            if [ "$quick" -eq 1 ]; then
+                if docker compose exec -T "$svc" php artisan migrate:fresh --force 2>/dev/null; then
+                    echo "Migration successful (quick mode)."
+                    return 0
+                fi
+            else
+                if docker compose exec -T "$svc" php artisan migrate:fresh --seed --force 2>/dev/null; then
+                    echo "Migration & seeding successful."
+                    return 0
+                fi
             fi
         fi
         i=$((i + 1))
@@ -106,10 +117,10 @@ for target in "${targets[@]}"; do
     
     # Ensure fresh state
     docker compose down -v 2>/dev/null || true
-    docker compose up -d
+    docker compose up -d --build
     
-    # Run migrations and seeding first, allowing retries while container starts
-    migrate_and_seed "$target" "$svc"
+    # Run migrations only (no seed — /hello and /test don't need seed data)
+    migrate_and_seed "$target" "$svc" 1
     
     # Wait for the server to return 200 OK (DB is ready and server is listening)
     wait_for "$target (ready)" "http://localhost:${port}/hello" 1
@@ -130,15 +141,73 @@ for target in "${targets[@]}"; do
     
     # Parse results
     if [ -f "$SUMMARY_FILE" ]; then
-        REQ_S=$(jq '.metrics.http_reqs.values.rate // 0' "$SUMMARY_FILE" | awk '{printf "%.2f", $1}')
-        MED_LAT=$(jq '.metrics.http_req_duration.values.med // 0' "$SUMMARY_FILE" | awk '{printf "%.2f", $1}')
-        P95_LAT=$(jq '.metrics.http_req_duration.values."p(95)" // 0' "$SUMMARY_FILE" | awk '{printf "%.2f", $1}')
-        ERR_RATE=$(jq '.metrics.http_req_failed.values.rate // 0' "$SUMMARY_FILE" | awk '{printf "%.4f", $1}')
+        REQ_S=$(jq '.metrics.http_reqs.rate // 0' "$SUMMARY_FILE" | awk '{printf "%.2f", $1}')
+        MED_LAT=$(jq '.metrics.http_req_duration.med // 0' "$SUMMARY_FILE" | awk '{printf "%.2f", $1}')
+        P95_LAT=$(jq '.metrics.http_req_duration."p(95)" // 0' "$SUMMARY_FILE" | awk '{printf "%.2f", $1}')
+        ERR_RATE=$(jq '.metrics.http_req_failed.value // 0' "$SUMMARY_FILE" | awk '{printf "%.2f%%", $1 * 100}')
+        DROPPED=$(jq '.metrics.dropped_iterations.count // 0' "$SUMMARY_FILE" | awk '{printf "%.0f", $1}')
         
-        echo "| $target | $REQ_S | ${MED_LAT}ms | ${P95_LAT}ms | ${ERR_RATE} |" >> "$RESULTS_FILE"
+        echo "| $target | $REQ_S | ${MED_LAT}ms | ${P95_LAT}ms | ${ERR_RATE} | $DROPPED |" >> "$RESULTS_FILE"
         rm "$SUMMARY_FILE"
     else
-        echo "| $target | N/A | N/A | N/A | Error |" >> "$RESULTS_FILE"
+        echo "| $target | N/A | N/A | N/A | Error | N/A |" >> "$RESULTS_FILE"
+    fi
+
+    echo "--- Tearing down $target ---"
+    pushd "$target" > /dev/null
+    docker compose down -v
+    popd > /dev/null
+
+    echo "Finished $target"
+    echo ""
+done
+
+# ──────────────────────────────────────────────
+# Phase 2: /bench endpoint (5 DB queries per request)
+# ──────────────────────────────────────────────
+echo "" >> "$RESULTS_FILE"
+echo "## /bench Endpoint Results" >> "$RESULTS_FILE"
+echo "" >> "$RESULTS_FILE"
+echo "| Framework | Req/s | Median Latency | P95 Latency | Error Rate | Dropped |" >> "$RESULTS_FILE"
+echo "|---|---|---|---|---|---|" >> "$RESULTS_FILE"
+
+for target in "${targets[@]}"; do
+    echo "============================================="
+    echo " Benchmarking /bench: $target"
+    echo "============================================="
+
+    port="${ports[$target]}"
+    svc="${services[$target]}"
+
+    echo "--- Starting $target for /bench ---"
+    pushd "$target" > /dev/null
+    docker compose up -d --build
+    migrate_and_seed "$target" "$svc"
+    wait_for "$target (ready)" "http://localhost:${port}/hello" 1
+    popd > /dev/null
+
+    echo "--- Running k6 bench for $target ---"
+    sleep 3
+
+    SUMMARY_FILE="summary_bench_${target}.json"
+
+    if BASE_URL="http://localhost:${port}" k6 run --summary-export="$SUMMARY_FILE" k6/bench.js; then
+        echo "k6 bench run successful"
+    else
+        echo "k6 bench run failed, continuing..."
+    fi
+
+    if [ -f "$SUMMARY_FILE" ]; then
+        REQ_S=$(jq '.metrics.http_reqs.rate // 0' "$SUMMARY_FILE" | awk '{printf "%.2f", $1}')
+        MED_LAT=$(jq '.metrics.http_req_duration.med // 0' "$SUMMARY_FILE" | awk '{printf "%.2f", $1}')
+        P95_LAT=$(jq '.metrics.http_req_duration."p(95)" // 0' "$SUMMARY_FILE" | awk '{printf "%.2f", $1}')
+        ERR_RATE=$(jq '.metrics.http_req_failed.value // 0' "$SUMMARY_FILE" | awk '{printf "%.2f%%", $1 * 100}')
+        DROPPED=$(jq '.metrics.dropped_iterations.count // 0' "$SUMMARY_FILE" | awk '{printf "%.0f", $1}')
+
+        echo "| $target | $REQ_S | ${MED_LAT}ms | ${P95_LAT}ms | ${ERR_RATE} | $DROPPED |" >> "$RESULTS_FILE"
+        rm "$SUMMARY_FILE"
+    else
+        echo "| $target | N/A | N/A | N/A | Error | N/A |" >> "$RESULTS_FILE"
     fi
 
     echo "--- Tearing down $target ---"

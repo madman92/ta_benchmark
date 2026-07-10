@@ -19,24 +19,21 @@ class SeedCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $output->writeln('Seeding users...');
+        $this->connection->executeStatement('TRUNCATE TABLE users RESTART IDENTITY CASCADE');
+
         for ($i = 1; $i <= 100; $i++) {
             $this->connection->executeStatement(
-                'INSERT INTO users (name, email) VALUES (?, ?) ON CONFLICT (email) DO NOTHING',
-                ["User {$i}", "user{$i}@bench.test"]
+                'INSERT INTO users (name, email, password, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())',
+                ["User {$i}", "user{$i}@bench.test", password_hash('password', PASSWORD_BCRYPT)]
             );
         }
 
         $output->writeln('Seeding posts...');
-        $posts = [];
+
         for ($i = 1; $i <= 1000; $i++) {
-            $posts[] = sprintf(
-                "(%d, 'Post title %d', 'Body content for post %d. Lorem ipsum dolor sit amet.', %d)",
-                rand(1, 100), $i, $i, rand(0, 500)
-            );
-        }
-        foreach (array_chunk($posts, 100) as $chunk) {
             $this->connection->executeStatement(
-                'INSERT INTO posts (user_id, title, body, views_count) VALUES ' . implode(',', $chunk)
+                'INSERT INTO posts (user_id, title, body, views_count, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())',
+                [rand(1, 100), "Post title {$i}", "Body content for post {$i}. Lorem ipsum dolor sit amet.", rand(0, 500)]
             );
         }
 

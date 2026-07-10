@@ -9,6 +9,9 @@ class BenchmarkSeeder extends Seeder
 {
     public function run(): void
     {
+        // Truncate tables for idempotency
+        DB::statement('TRUNCATE TABLE users RESTART IDENTITY CASCADE');
+
         // Create 100 users
         $users = [];
         for ($i = 1; $i <= 100; $i++) {

@@ -15,6 +15,7 @@ final class Version20260101000000 extends AbstractMigration
             id SERIAL PRIMARY KEY,
             name VARCHAR(255) NOT NULL,
             email VARCHAR(255) NOT NULL UNIQUE,
+            password VARCHAR(255) NOT NULL,
             created_at TIMESTAMP DEFAULT NOW(),
             updated_at TIMESTAMP DEFAULT NOW()
         )');
