@@ -19,6 +19,7 @@ declare -a targets=(
     "octane_swoole"
     "symfony-spawn"
     "symfony-swoole"
+    "symfony-swoole-coroutine"
 )
 
 # Port mappings to verify the service is up
@@ -29,6 +30,7 @@ declare -A ports=(
     ["octane_swoole"]="8084"
     ["symfony-spawn"]="8085"
     ["symfony-swoole"]="8087"
+    ["symfony-swoole-coroutine"]="8088"
 )
 
 # K6 script mapping
@@ -39,6 +41,7 @@ declare -A k6_scripts=(
     ["octane_swoole"]="k6/octane_swoole.js"
     ["symfony-spawn"]="k6/symfony_spawn.js"
     ["symfony-swoole"]="k6/symfony_swoole.js"
+    ["symfony-swoole-coroutine"]="k6/symfony_swoole_coroutine.js"
 )
 
 # The name of the app container for artisan/console commands
@@ -49,6 +52,7 @@ declare -A services=(
     ["octane_swoole"]="app"
     ["symfony-spawn"]="app"
     ["symfony-swoole"]="app"
+    ["symfony-swoole-coroutine"]="app"
 )
 
 wait_for() {
@@ -80,7 +84,7 @@ migrate_and_seed() {
         echo "--- Migrating and seeding database for $target ---"
     fi
     while [ $i -lt $max_retries ]; do
-        if [ "$target" == "symfony-spawn" ] || [ "$target" == "symfony-swoole" ]; then
+        if [ "$target" == "symfony-spawn" ] || [ "$target" == "symfony-swoole" ] || [ "$target" == "symfony-swoole-coroutine" ]; then
             if docker compose exec -T -e APP_ENV=cli "$svc" php bin/console doctrine:migrations:migrate --no-interaction 2>/dev/null && \
                { [ "$quick" -eq 1 ] || docker compose exec -T -e APP_ENV=cli "$svc" php bin/console app:seed 2>/dev/null; }; then
                 echo "Migration & seeding successful."

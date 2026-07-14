@@ -40,6 +40,9 @@
             "App\\Tests\\": "tests/"
         }
     },
+    "require-dev": {
+        "swoole/ide-helper": "^6.0"
+    },
     "replace": {
         "symfony/polyfill-ctype": "*",
         "symfony/polyfill-iconv": "*",
