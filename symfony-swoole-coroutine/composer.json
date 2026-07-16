@@ -19,6 +19,7 @@
         "symfony/dotenv": "7.4.*",
         "symfony/flex": "^2",
         "symfony/framework-bundle": "7.4.*",
+        "symfony/monolog-bundle": "^4.0",
         "symfony/runtime": "7.4.*",
         "symfony/yaml": "7.4.*"
     },
@@ -41,6 +42,7 @@
         }
     },
     "require-dev": {
+        "openswoole/ide-helper": "^26.2",
         "swoole/ide-helper": "^6.0"
     },
     "replace": {

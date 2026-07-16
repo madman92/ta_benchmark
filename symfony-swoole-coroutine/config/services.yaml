@@ -7,3 +7,7 @@ services:
 
     App\:
         resource: '../src/'
+
+    App\Service\DoctrinePool:
+        arguments:
+            $maxSize: 500

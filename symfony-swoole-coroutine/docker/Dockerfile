@@ -1,22 +1,21 @@
-FROM openswoole/swoole:25.2-php8.4 AS builder
+FROM openswoole/openswoole:26.2-php8.5-alpine AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends libpq-dev git unzip \
-    && docker-php-ext-install pdo_pgsql pcntl \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache postgresql-dev libcurl curl-dev git unzip \
+    && docker-php-ext-install pdo_pgsql pcntl curl sockets
 
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
 COPY composer.json symfony.lock ./
-RUN composer install --no-dev --no-interaction --optimize-autoloader --no-scripts
+RUN composer install --no-dev --no-interaction --optimize-autoloader --no-scripts --ignore-platform-req=ext-openswoole
 
-FROM openswoole/swoole:25.2-php8.4
+FROM openswoole/openswoole:26.2-php8.5-alpine
 
-RUN apt-get update && apt-get install -y --no-install-recommends libpq-dev \
-    && docker-php-ext-install pdo_pgsql pcntl \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache postgresql-dev libcurl curl-dev \
+    && docker-php-ext-install pdo_pgsql pcntl curl sockets
 
 COPY docker/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
+RUN echo "openswoole.use_fiber_context=On" > /usr/local/etc/php/conf.d/openswoole.ini
 
 WORKDIR /app
 COPY --from=builder /app/vendor /app/vendor

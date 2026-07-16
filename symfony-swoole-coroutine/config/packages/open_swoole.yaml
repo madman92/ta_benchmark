@@ -1,0 +1,15 @@
+open_swoole:
+    host: '0.0.0.0'
+    port: 8080
+    hook_flags: !php/const SWOOLE_HOOK_ALL
+    use_fiber_context: true
+    options:
+        worker_num: 4
+        pid_file: '/var/run/openswoole_server.pid'
+        log_file: '%kernel.logs_dir%/swoole.log'
+        daemonize: false
+        max_request: 200
+        document_root: '%kernel.project_dir%/public'
+        enable_static_handler: false
+        open_http2_protocol: false
+        open_tcp_nodelay: false

@@ -2,15 +2,18 @@
 
 namespace App\Controller;
 
-use co;
+use App\Service\DoctrinePool;
 use Doctrine\DBAL\Connection;
+use OpenSwoole\Core\Coroutine\WaitGroup;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\Routing\Attribute\Route;
 
 class BenchController
 {
-    public function __construct(private readonly Connection $connection)
-    {
+    public function __construct(
+        private readonly DoctrinePool $doctrinePool,
+        private readonly Connection $connection
+    ) {
     }
 
     #[Route('/hello')]
@@ -25,18 +28,8 @@ class BenchController
     #[Route('/test')]
     public function test(): JsonResponse
     {
-        // $this->connection->executeQuery('SELECT pg_sleep(0.01)');
+        $this->connection->executeQuery('SELECT pg_sleep(0.01)');
 
-        go(function () {
-            co::sleep(1);
-            echo "Done 1\n";
-        });
-
-        go(function () {
-            Co::sleep(1);
-            echo "Done 2\n";
-        });
-        
         return new JsonResponse([
             'ok' => true,
             'time' => (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
@@ -46,57 +39,98 @@ class BenchController
     #[Route('/bench')]
     public function bench(): JsonResponse
     {
+        $pool = $this->doctrinePool;
+
         $userId = rand(1, 100);
-
-        $user = $this->connection->fetchAssociative(
-            'SELECT id, name, email FROM users WHERE id = ?',
-            [$userId]
-        );
-
-        $posts = $this->connection->fetchAllAssociative(
-            'SELECT id, title, views_count FROM posts WHERE user_id = ? ORDER BY created_at DESC LIMIT 10',
-            [$userId]
-        );
-
-        $postId = !empty($posts) ? $posts[0]['id'] : 1;
-
-        $this->connection->executeStatement(
-            'INSERT INTO post_views (post_id, ip_address, viewed_at) VALUES (?, ?, NOW())',
-            [$postId, '10.0.' . rand(0, 255) . '.' . rand(0, 255)]
-        );
-
-        $this->connection->executeStatement(
-            'UPDATE posts SET views_count = views_count + 1 WHERE id = ?',
-            [$postId]
-        );
-
-        $stats = $this->connection->fetchAssociative(
-            'SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?',
-            [$postId]
-        );
-
-        $topPosts = $this->connection->fetchAllAssociative(
-            'SELECT id, title, views_count FROM posts ORDER BY views_count DESC LIMIT 5'
-        );
-
-        $leaderboard = $this->connection->fetchAllAssociative(
-            'SELECT user_id, COUNT(*) as post_count FROM posts GROUP BY user_id ORDER BY post_count DESC LIMIT 5'
-        );
-
         $otherUserId = ($userId % 100) + 1;
-        $otherUser = $this->connection->fetchAssociative(
-            'SELECT id, name, email FROM users WHERE id = ?',
-            [$otherUserId]
-        );
 
-        $otherPosts = $this->connection->fetchAllAssociative(
-            'SELECT id, title FROM posts WHERE user_id = ? LIMIT 5',
-            [$otherUserId]
-        );
+        $wg = new WaitGroup();
+        $wg->add(3);
 
-        $recentViews = $this->connection->fetchAllAssociative(
-            'SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC LIMIT 10'
-        );
+        $user = null;
+        $posts = null;
+        $postId = null;
+        $stats = null;
+        $topPosts = null;
+        $leaderboard = null;
+        $otherUser = null;
+        $otherPosts = null;
+        $recentViews = null;
+
+        go(function () use ($pool, $wg, $userId, &$user, &$posts, &$postId, &$stats) {
+            $conn = $pool->get();
+            try {
+                $user = $conn->fetchAssociative(
+                    'SELECT id, name, email FROM users WHERE id = ?',
+                    [$userId]
+                );
+
+                $posts = $conn->fetchAllAssociative(
+                    'SELECT id, title, views_count FROM posts WHERE user_id = ? ORDER BY created_at DESC LIMIT 10',
+                    [$userId]
+                );
+
+                $postId = !empty($posts) ? $posts[0]['id'] : 1;
+
+                $conn->executeStatement(
+                    'INSERT INTO post_views (post_id, ip_address, viewed_at) VALUES (?, ?, NOW())',
+                    [$postId, '10.0.' . rand(0, 255) . '.' . rand(0, 255)]
+                );
+
+                $conn->executeStatement(
+                    'UPDATE posts SET views_count = views_count + 1 WHERE id = ?',
+                    [$postId]
+                );
+
+                $stats = $conn->fetchAssociative(
+                    'SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?',
+                    [$postId]
+                );
+            } finally {
+                $pool->put($conn);
+            }
+            $wg->done();
+        });
+
+        go(function () use ($pool, $wg, &$topPosts, &$leaderboard, &$recentViews) {
+            $conn = $pool->get();
+            try {
+                $topPosts = $conn->fetchAllAssociative(
+                    'SELECT id, title, views_count FROM posts ORDER BY views_count DESC LIMIT 5'
+                );
+
+                $leaderboard = $conn->fetchAllAssociative(
+                    'SELECT user_id, COUNT(*) as post_count FROM posts GROUP BY user_id ORDER BY post_count DESC LIMIT 5'
+                );
+
+                $recentViews = $conn->fetchAllAssociative(
+                    'SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC LIMIT 10'
+                );
+            } finally {
+                $pool->put($conn);
+            }
+            $wg->done();
+        });
+
+        go(function () use ($pool, $wg, $otherUserId, &$otherUser, &$otherPosts) {
+            $conn = $pool->get();
+            try {
+                $otherUser = $conn->fetchAssociative(
+                    'SELECT id, name, email FROM users WHERE id = ?',
+                    [$otherUserId]
+                );
+
+                $otherPosts = $conn->fetchAllAssociative(
+                    'SELECT id, title FROM posts WHERE user_id = ? LIMIT 5',
+                    [$otherUserId]
+                );
+            } finally {
+                $pool->put($conn);
+            }
+            $wg->done();
+        });
+
+        $wg->wait();
 
         return new JsonResponse([
             'user' => $user['name'],
