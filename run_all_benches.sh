@@ -6,11 +6,6 @@ cd "$(dirname "$0")"
 
 RESULTS_FILE="benchmark_results.md"
 
-echo "# Benchmark Results" > "$RESULTS_FILE"
-echo "" >> "$RESULTS_FILE"
-echo "| Framework | Req/s | Median Latency | P95 Latency | Error Rate | Dropped |" >> "$RESULTS_FILE"
-echo "|---|---|---|---|---|---|" >> "$RESULTS_FILE"
-
 # The targets correspond to directory names
 declare -a targets=(
     "fpm"
@@ -111,6 +106,9 @@ migrate_and_seed() {
     return 1
 }
 
+TMP_PHASE1=$(mktemp)
+TMP_PHASE2=$(mktemp)
+
 for target in "${targets[@]}"; do
     echo "============================================="
     echo " Benchmarking: $target"
@@ -127,72 +125,35 @@ for target in "${targets[@]}"; do
     docker compose down -v 2>/dev/null || true
     docker compose up -d --build
     
-    # Run migrations only (no seed — /hello and /test don't need seed data)
-    migrate_and_seed "$target" "$svc" 1
+    migrate_and_seed "$target" "$svc"
     
     # Wait for the server to return 200 OK (DB is ready and server is listening)
     wait_for "$target (ready)" "http://localhost:${port}/hello" 1
     popd > /dev/null
 
     echo "--- Running k6 for $target ---"
-    # Wait a few seconds for things to stabilize after seeding
     sleep 3
-    
+
     SUMMARY_FILE="summary_${target}.json"
-    
-    # Run k6 and export summary as json
+
     if k6 run --summary-export="$SUMMARY_FILE" "$script"; then
         echo "k6 run successful"
     else
         echo "k6 run failed, continuing..."
     fi
-    
-    # Parse results
+
     if [ -f "$SUMMARY_FILE" ]; then
         REQ_S=$(jq '.metrics.http_reqs.rate // 0' "$SUMMARY_FILE" | awk '{printf "%.2f", $1}')
         MED_LAT=$(jq '.metrics.http_req_duration.med // 0' "$SUMMARY_FILE" | awk '{printf "%.2f", $1}')
         P95_LAT=$(jq '.metrics.http_req_duration."p(95)" // 0' "$SUMMARY_FILE" | awk '{printf "%.2f", $1}')
         ERR_RATE=$(jq '.metrics.http_req_failed.value // 0' "$SUMMARY_FILE" | awk '{printf "%.2f%%", $1 * 100}')
         DROPPED=$(jq '.metrics.dropped_iterations.count // 0' "$SUMMARY_FILE" | awk '{printf "%.0f", $1}')
-        
-        echo "| $target | $REQ_S | ${MED_LAT}ms | ${P95_LAT}ms | ${ERR_RATE} | $DROPPED |" >> "$RESULTS_FILE"
+
+        echo "| $target | $REQ_S | ${MED_LAT}ms | ${P95_LAT}ms | ${ERR_RATE} | $DROPPED |" >> "$TMP_PHASE1"
         rm "$SUMMARY_FILE"
     else
-        echo "| $target | N/A | N/A | N/A | Error | N/A |" >> "$RESULTS_FILE"
+        echo "| $target | N/A | N/A | N/A | Error | N/A |" >> "$TMP_PHASE1"
     fi
-
-    echo "--- Tearing down $target ---"
-    pushd "$target" > /dev/null
-    docker compose down -v
-    popd > /dev/null
-
-    echo "Finished $target"
-    echo ""
-done
-
-# ──────────────────────────────────────────────
-# Phase 2: /bench endpoint (5 DB queries per request)
-# ──────────────────────────────────────────────
-echo "" >> "$RESULTS_FILE"
-echo "## /bench Endpoint Results" >> "$RESULTS_FILE"
-echo "" >> "$RESULTS_FILE"
-echo "| Framework | Req/s | Median Latency | P95 Latency | Error Rate | Dropped |" >> "$RESULTS_FILE"
-echo "|---|---|---|---|---|---|" >> "$RESULTS_FILE"
-
-for target in "${targets[@]}"; do
-    echo "============================================="
-    echo " Benchmarking /bench: $target"
-    echo "============================================="
-
-    port="${ports[$target]}"
-    svc="${services[$target]}"
-
-    echo "--- Starting $target for /bench ---"
-    pushd "$target" > /dev/null
-    docker compose up -d --build
-    migrate_and_seed "$target" "$svc"
-    wait_for "$target (ready)" "http://localhost:${port}/hello" 1
-    popd > /dev/null
 
     echo "--- Running k6 bench for $target ---"
     sleep 3
@@ -212,10 +173,10 @@ for target in "${targets[@]}"; do
         ERR_RATE=$(jq '.metrics.http_req_failed.value // 0' "$SUMMARY_FILE" | awk '{printf "%.2f%%", $1 * 100}')
         DROPPED=$(jq '.metrics.dropped_iterations.count // 0' "$SUMMARY_FILE" | awk '{printf "%.0f", $1}')
 
-        echo "| $target | $REQ_S | ${MED_LAT}ms | ${P95_LAT}ms | ${ERR_RATE} | $DROPPED |" >> "$RESULTS_FILE"
+        echo "| $target | $REQ_S | ${MED_LAT}ms | ${P95_LAT}ms | ${ERR_RATE} | $DROPPED |" >> "$TMP_PHASE2"
         rm "$SUMMARY_FILE"
     else
-        echo "| $target | N/A | N/A | N/A | Error | N/A |" >> "$RESULTS_FILE"
+        echo "| $target | N/A | N/A | N/A | Error | N/A |" >> "$TMP_PHASE2"
     fi
 
     echo "--- Tearing down $target ---"
@@ -226,6 +187,22 @@ for target in "${targets[@]}"; do
     echo "Finished $target"
     echo ""
 done
+
+{
+  echo "# Benchmark Results"
+  echo ""
+  echo "| Framework | Req/s | Median Latency | P95 Latency | Error Rate | Dropped |"
+  echo "|---|---|---|---|---|---|"
+  cat "$TMP_PHASE1"
+  echo ""
+  echo "## /bench Endpoint Results"
+  echo ""
+  echo "| Framework | Req/s | Median Latency | P95 Latency | Error Rate | Dropped |"
+  echo "|---|---|---|---|---|---|"
+  cat "$TMP_PHASE2"
+} > "$RESULTS_FILE"
+
+rm -f "$TMP_PHASE1" "$TMP_PHASE2"
 
 echo "============================================="
 echo "All benchmarks completed!"

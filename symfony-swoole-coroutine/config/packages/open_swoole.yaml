@@ -4,7 +4,7 @@ open_swoole:
     hook_flags: !php/const SWOOLE_HOOK_ALL
     use_fiber_context: true
     options:
-        worker_num: 4
+        worker_num: 16
         pid_file: '/var/run/openswoole_server.pid'
         log_file: '%kernel.logs_dir%/swoole.log'
         daemonize: false
