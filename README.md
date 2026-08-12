@@ -1,6 +1,6 @@
 # ta_benchmark
 
-Benchmark comparing different PHP server adapters under load using [k6](https://k6.io).
+Benchmark comparing different PHP server adapters and Node.js servers under load using [k6](https://k6.io).
 
 ## Adapters
 
@@ -10,6 +10,8 @@ Benchmark comparing different PHP server adapters under load using [k6](https://
 | Octane Swoole                        | 8084 | 12      | `phpswoole/swoole:5.1-php8.3-alpine`         |
 | laravel-spawn (TrueAsync FrankenPHP) | 8083 | 12      | `trueasync/php-true-async:latest-frankenphp` |
 | symfony-spawn (TrueAsync FrankenPHP) | 8085 | 12      | `trueasync/php-true-async:latest-frankenphp` |
+| nodejs-fastify (cluster)             | 8089 | 16      | `node:24-alpine`                             |
+| nodejs-express (cluster)             | 8090 | 16      | `node:24-alpine`                             |
 
 ## Routes tested
 
@@ -18,7 +20,7 @@ Benchmark comparing different PHP server adapters under load using [k6](https://
 | `GET /hello`             | Pure JSON response, no DB                                                              |
 | `GET /test`              | One DB query (`SELECT pg_sleep(0.01)`, simulates 10ms DB latency)                      |
 | `GET /bench`             | 5 DB queries: SELECT user, SELECT posts, INSERT view, UPDATE counter, SELECT aggregate |
-| `GET /debug/connections` | Live PostgreSQL connection stats (active, idle, total vs max) — TrueAsync only         |
+| `GET /debug/connections` | Live PostgreSQL connection stats (active, idle, total vs max) — TrueAsync + Node.js |
 
 ---
 
@@ -181,6 +183,28 @@ docker compose restart app
 
 ---
 
+### nodejs-fastify / nodejs-express
+
+Both are built in the container (`npm install` at build time) and use a `pg` connection pool
+(min 2 / max 10 per worker, mirroring the TrueAsync pool) with a cluster of **16 workers**.
+
+```bash
+cd nodejs-fastify   # or nodejs-express
+
+# 1. Build and start
+docker compose up -d --build
+
+# 2. First-time setup (schema + seed)
+docker compose exec app node init-db.js
+
+curl http://localhost:8089/hello   # fastify
+curl http://localhost:8090/hello   # express
+```
+
+The worker count and ports are configurable via `WORKERS`, `PORT` and `DB_*` env vars in `compose.yml`.
+
+---
+
 ## Running benchmarks
 
 All scripts use the same load: **840 hello req/s + 360 DB req/s = 1200 req/s total**.
@@ -200,12 +224,18 @@ k6 run k6/laravel_spawn.js
 # symfony-spawn (TrueAsync FrankenPHP)
 k6 run k6/symfony_spawn.js
 
+# nodejs (Fastify / Express, 16 workers)
+k6 run k6/nodejs_fastify.js
+k6 run k6/nodejs_express.js
+
 # /bench endpoint (5 DB queries per request), target adapter via BASE_URL
 BASE_URL=http://localhost:8083 k6 run k6/bench.js
 BASE_URL=http://localhost:8085 k6 run k6/bench.js
 BASE_URL=http://localhost:8084 k6 run k6/bench.js
 BASE_URL=http://localhost:8082 k6 run k6/bench.js
 BASE_URL=http://localhost:8086 k6 run k6/bench.js
+BASE_URL=http://localhost:8089 k6 run k6/bench.js
+BASE_URL=http://localhost:8090 k6 run k6/bench.js
 ```
 
 ---
@@ -252,5 +282,6 @@ concurrent DB-bound requests without blocking.
 - Each adapter has its own PostgreSQL instance on a separate port to avoid interference
 - `APP_DEBUG=false` in all setups for fair comparison
 - OPcache enabled in PHP-FPM
+- Node.js targets run 16 cluster workers (12-core host) with a `pg` pool of max 10 per worker
 - PostgreSQL `max_connections=500` in all setups
 - Absolute numbers will be higher on bare metal (benchmarks run on WSL2)
