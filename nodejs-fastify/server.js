@@ -39,51 +39,33 @@ function buildApp() {
 
     app.get('/bench', async () => {
         const userId = Math.floor(Math.random() * 100) + 1;
+        const otherUserId = (userId % 100) + 1;
 
-        const user = await pool.query(
-            'SELECT id, name, email FROM users WHERE id = $1', [userId]
-        );
-
-        const posts = await pool.query(
-            'SELECT id, title, views_count FROM posts WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10',
-            [userId]
-        );
+        const [user, posts, topPosts, leaderboard, otherUser, otherPosts, recentViews] = await Promise.all([
+            pool.query('SELECT id, name, email FROM users WHERE id = $1', [userId]),
+            pool.query('SELECT id, title, views_count FROM posts WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10', [userId]),
+            pool.query('SELECT id, title, views_count FROM posts ORDER BY views_count DESC LIMIT 5'),
+            pool.query('SELECT user_id, COUNT(*)::int AS post_count FROM posts GROUP BY user_id ORDER BY post_count DESC LIMIT 5'),
+            pool.query('SELECT id, name, email FROM users WHERE id = $1', [otherUserId]),
+            pool.query('SELECT id, title FROM posts WHERE user_id = $1 LIMIT 5', [otherUserId]),
+            pool.query('SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC LIMIT 10'),
+        ]);
 
         const postId = posts.rows.length > 0 ? posts.rows[0].id : 1;
 
-        await pool.query(
-            'INSERT INTO post_views (post_id, ip_address, viewed_at) VALUES ($1, $2, NOW())',
-            [postId, `10.0.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}`]
-        );
-
-        await pool.query(
-            'UPDATE posts SET views_count = views_count + 1 WHERE id = $1', [postId]
-        );
+        await Promise.all([
+            pool.query(
+                'INSERT INTO post_views (post_id, ip_address, viewed_at) VALUES ($1, $2, NOW())',
+                [postId, `10.0.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}`]
+            ),
+            pool.query(
+                'UPDATE posts SET views_count = views_count + 1 WHERE id = $1', [postId]
+            ),
+        ]);
 
         const stats = await pool.query(
             'SELECT COUNT(*)::int AS total_views, MAX(viewed_at) AS last_view FROM post_views WHERE post_id = $1',
             [postId]
-        );
-
-        const topPosts = await pool.query(
-            'SELECT id, title, views_count FROM posts ORDER BY views_count DESC LIMIT 5'
-        );
-
-        const leaderboard = await pool.query(
-            'SELECT user_id, COUNT(*)::int AS post_count FROM posts GROUP BY user_id ORDER BY post_count DESC LIMIT 5'
-        );
-
-        const otherUserId = (userId % 100) + 1;
-        const otherUser = await pool.query(
-            'SELECT id, name, email FROM users WHERE id = $1', [otherUserId]
-        );
-
-        const otherPosts = await pool.query(
-            'SELECT id, title FROM posts WHERE user_id = $1 LIMIT 5', [otherUserId]
-        );
-
-        const recentViews = await pool.query(
-            'SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC LIMIT 10'
         );
 
         const heapUsed = process.memoryUsage().heapUsed;
