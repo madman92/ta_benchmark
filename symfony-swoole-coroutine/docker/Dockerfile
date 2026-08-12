@@ -1,7 +1,7 @@
 FROM openswoole/openswoole:26.2-php8.5-alpine AS builder
 
 RUN apk add --no-cache postgresql-dev libcurl curl-dev git unzip \
-    && docker-php-ext-install pdo_pgsql pcntl curl sockets
+    && docker-php-ext-install pdo_pgsql pcntl curl sockets intl
 
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
@@ -12,7 +12,7 @@ RUN composer install --no-dev --no-interaction --optimize-autoloader --no-script
 FROM openswoole/openswoole:26.2-php8.5-alpine
 
 RUN apk add --no-cache postgresql-dev libcurl curl-dev \
-    && docker-php-ext-install pdo_pgsql pcntl curl sockets
+    && docker-php-ext-install pdo_pgsql pcntl curl sockets intl
 
 COPY docker/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 RUN echo "openswoole.use_fiber_context=On" > /usr/local/etc/php/conf.d/openswoole.ini
