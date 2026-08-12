@@ -1,0 +1,6 @@
+vendor/
+var/
+storage/
+bootstrap/cache/
+.git/
+node_modules/

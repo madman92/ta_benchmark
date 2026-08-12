@@ -1,14 +1,13 @@
 services:
 
   app:
-    image: trueasync/php-true-async:0.8.9-php8.6-frankenphp
+    build:
+      context: .
+      dockerfile: Dockerfile
     working_dir: /app
     command: php public/index.php
     ports:
       - "8085:8080"
-    volumes:
-      - .:/app
-      #- /home/yan/projects/symfony-spawn:/home/yan/projects/symfony-spawn
     environment:
       APP_RUNTIME: Spawn\Symfony\Runtime\TrueAsyncRuntime
       APP_RUNTIME_OPTIONS: '{"workers":16}'

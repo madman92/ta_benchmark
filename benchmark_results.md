@@ -2,22 +2,26 @@
 
 | Framework | Req/s | Median Latency | P95 Latency | Error Rate | Dropped |
 |---|---|---|---|---|---|
-| fpm | 766.32 | 1068.34ms | 1527.70ms | 0.00% | 11798 |
-| laravel-spawn | 1198.46 | 5.43ms | 71.47ms | 0.00% | 36 |
-| octane_frankenphp | 1198.63 | 5.70ms | 88.73ms | 0.00% | 27 |
-| octane_swoole | 1197.55 | 11.57ms | 91.17ms | 0.00% | 19 |
-| symfony-spawn | 1199.63 | 0.17ms | 10.33ms | 0.00% | 0 |
-| symfony-swoole | 1199.62 | 0.20ms | 10.33ms | 0.00% | 0 |
-| symfony-swoole-coroutine | 1199.62 | 0.30ms | 10.43ms | 0.00% | 0 |
+| fpm | 775.90 | 1101.74ms | 1413.56ms | 0.00% | 11646 |
+| laravel-spawn | 1197.43 | 4.28ms | 79.30ms | 0.00% | 66 |
+| octane_frankenphp | 1199.09 | 5.54ms | 88.88ms | 0.00% | 14 |
+| octane_swoole | 1198.89 | 8.46ms | 94.26ms | 0.00% | 17 |
+| symfony-spawn | 1199.64 | 0.17ms | 10.32ms | 0.00% | 0 |
+| symfony-swoole | 1199.64 | 0.21ms | 10.33ms | 0.00% | 0 |
+| symfony-swoole-coroutine | 1199.65 | 0.30ms | 10.42ms | 0.00% | 0 |
+| nodejs-fastify | 1199.65 | 0.13ms | 10.33ms | 0.00% | 0 |
+| nodejs-express | 1199.70 | 0.15ms | 10.36ms | 0.00% | 0 |
 
 ## /bench Endpoint Results
 
 | Framework | Req/s | Median Latency | P95 Latency | Error Rate | Dropped |
 |---|---|---|---|---|---|
-| fpm | 875.74 | 6.16ms | 1582.91ms | 77.19% | 2295 |
-| laravel-spawn | 994.68 | 12.33ms | 130.50ms | 0.00% | 137 |
-| octane_frankenphp | 953.77 | 14.03ms | 1102.42ms | 0.00% | 1380 |
-| octane_swoole | 957.46 | 81.70ms | 530.03ms | 0.00% | 522 |
-| symfony-spawn | 993.53 | 5.80ms | 119.98ms | 0.00% | 174 |
-| symfony-swoole | 998.28 | 8.34ms | 93.35ms | 0.00% | 45 |
-| symfony-swoole-coroutine | 998.36 | 1.81ms | 80.67ms | 0.00% | 45 |
+| fpm | 923.17 | 5.90ms | 1556.54ms | 81.52% | 2300 |
+| laravel-spawn | 994.41 | 13.51ms | 138.24ms | 0.00% | 160 |
+| octane_frankenphp | 940.67 | 9.89ms | 1199.01ms | 0.00% | 1698 |
+| octane_swoole | 912.36 | 124.27ms | 1225.50ms | 0.00% | 1463 |
+| symfony-spawn | 997.68 | 5.80ms | 91.27ms | 0.00% | 57 |
+| symfony-swoole | 997.92 | 7.19ms | 96.70ms | 0.00% | 58 |
+| symfony-swoole-coroutine | 998.27 | 2.25ms | 76.69ms | 0.00% | 44 |
+| nodejs-fastify | 996.23 | 6.00ms | 100.93ms | 0.00% | 102 |
+| nodejs-express | 996.25 | 5.94ms | 97.21ms | 0.00% | 101 |
