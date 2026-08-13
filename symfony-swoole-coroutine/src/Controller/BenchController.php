@@ -72,7 +72,7 @@ class BenchController
 
         $postId = !empty($posts) ? $posts[0]['id'] : 1;
 
-        [, , $stats] = batch([
+        batch([
             fn() => $this->doctrinePool->executeStatement(
                 'INSERT INTO post_views (post_id, ip_address, viewed_at) VALUES (?, ?, NOW())',
                 [$postId, '10.0.' . rand(0, 255) . '.' . rand(0, 255)]
@@ -81,11 +81,12 @@ class BenchController
                 'UPDATE posts SET views_count = views_count + 1 WHERE id = ?',
                 [$postId]
             ),
-            fn() => $this->doctrinePool->fetchAssociative(
-                'SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?',
-                [$postId]
-            ),
         ]);
+
+        $stats = $this->doctrinePool->fetchAssociative(
+            'SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?',
+            [$postId]
+        );
 
         return new JsonResponse([
             'user' => $user['name'],
