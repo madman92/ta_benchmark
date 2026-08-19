@@ -17,6 +17,8 @@ declare -a targets=(
     "symfony-swoole-coroutine"
     "nodejs-fastify"
     "nodejs-express"
+    "nodejs-nestjs"
+    "nodejs-nextjs"
 )
 
 # Port mappings to verify the service is up
@@ -30,6 +32,8 @@ declare -A ports=(
     ["symfony-swoole-coroutine"]="8088"
     ["nodejs-fastify"]="8089"
     ["nodejs-express"]="8090"
+    ["nodejs-nestjs"]="8091"
+    ["nodejs-nextjs"]="8092"
 )
 
 # K6 script mapping
@@ -43,6 +47,8 @@ declare -A k6_scripts=(
     ["symfony-swoole-coroutine"]="k6/symfony_swoole_coroutine.js"
     ["nodejs-fastify"]="k6/nodejs_fastify.js"
     ["nodejs-express"]="k6/nodejs_express.js"
+    ["nodejs-nestjs"]="k6/nestjs.js"
+    ["nodejs-nextjs"]="k6/nextjs.js"
 )
 
 # The name of the app container for artisan/console commands
@@ -56,6 +62,8 @@ declare -A services=(
     ["symfony-swoole-coroutine"]="app"
     ["nodejs-fastify"]="app"
     ["nodejs-express"]="app"
+    ["nodejs-nestjs"]="app"
+    ["nodejs-nextjs"]="app"
 )
 
 wait_for() {
@@ -87,7 +95,7 @@ migrate_and_seed() {
         echo "--- Migrating and seeding database for $target ---"
     fi
     while [ $i -lt $max_retries ]; do
-        if [ "$target" == "nodejs-fastify" ] || [ "$target" == "nodejs-express" ]; then
+        if [ "$target" == "nodejs-fastify" ] || [ "$target" == "nodejs-express" ] || [ "$target" == "nodejs-nestjs" ] || [ "$target" == "nodejs-nextjs" ]; then
             if docker compose exec -T "$svc" node init-db.js 2>/dev/null; then
                 echo "Database initialized."
                 return 0

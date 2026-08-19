@@ -12,6 +12,8 @@ Benchmark comparing different PHP server adapters and Node.js servers under load
 | symfony-spawn (TrueAsync FrankenPHP) | 8085 | 12      | `trueasync/php-true-async:latest-frankenphp` |
 | nodejs-fastify (cluster)             | 8089 | 16      | `node:24-alpine`                             |
 | nodejs-express (cluster)             | 8090 | 16      | `node:24-alpine`                             |
+| nodejs-nestjs (cluster)              | 8091 | 16      | `node:24-alpine`                             |
+| nodejs-nextjs (16 standalone + proxy)| 8092 | 16      | `node:24-alpine`                             |
 
 ## Routes tested
 
@@ -205,6 +207,47 @@ The worker count and ports are configurable via `WORKERS`, `PORT` and `DB_*` env
 
 ---
 
+### nodejs-nestjs
+
+NestJS 11 (Express platform) — the "full-stack" Node.js counterpart to Laravel/Symfony:
+dependency injection, modules, controllers, guards, pipes, with a raw `pg` pool (min 2 / max 10).
+Each of the **16 cluster workers** boots the full DI container, mirroring the Octane worker model.
+
+```bash
+cd nodejs-nestjs
+
+# 1. Build and start (compiles TypeScript in the container)
+docker compose up -d --build
+
+# 2. First-time setup (schema + seed)
+docker compose exec app node init-db.js
+
+curl http://localhost:8091/hello
+```
+
+---
+
+### nodejs-nextjs
+
+Next.js 16 (App Router, `output: 'standalone'`) — route handlers only (`/hello`, `/test`,
+`/bench`, `/debug/connections`), raw `pg` pool. Next.js runs a single-threaded server, so
+`entry.js` forks **16 standalone instances** (each on its own internal port) behind a tiny
+round-robin proxy — note this adds one proxy hop that the other adapters don't have.
+
+```bash
+cd nodejs-nextjs
+
+# 1. Build and start (multi-stage: next build inside the container)
+docker compose up -d --build
+
+# 2. First-time setup (schema + seed)
+docker compose exec app node init-db.js
+
+curl http://localhost:8092/hello
+```
+
+---
+
 ## Running benchmarks
 
 All scripts use the same load: **840 hello req/s + 360 DB req/s = 1200 req/s total**.
@@ -228,6 +271,10 @@ k6 run k6/symfony_spawn.js
 k6 run k6/nodejs_fastify.js
 k6 run k6/nodejs_express.js
 
+# nodejs (NestJS / Next.js)
+k6 run k6/nestjs.js
+k6 run k6/nextjs.js
+
 # /bench endpoint (5 DB queries per request), target adapter via BASE_URL
 BASE_URL=http://localhost:8083 k6 run k6/bench.js
 BASE_URL=http://localhost:8085 k6 run k6/bench.js
@@ -236,6 +283,8 @@ BASE_URL=http://localhost:8082 k6 run k6/bench.js
 BASE_URL=http://localhost:8086 k6 run k6/bench.js
 BASE_URL=http://localhost:8089 k6 run k6/bench.js
 BASE_URL=http://localhost:8090 k6 run k6/bench.js
+BASE_URL=http://localhost:8091 k6 run k6/bench.js
+BASE_URL=http://localhost:8092 k6 run k6/bench.js
 ```
 
 ---
@@ -283,5 +332,7 @@ concurrent DB-bound requests without blocking.
 - `APP_DEBUG=false` in all setups for fair comparison
 - OPcache enabled in PHP-FPM
 - Node.js targets run 16 cluster workers (12-core host) with a `pg` pool of max 10 per worker
+- NestJS uses the Express platform (same underlay as the express entry) with its full DI/module/controller stack — a like-for-like match for Laravel/Symfony's framework weight; all entries use raw SQL, no ORM
+- Next.js runs 16 standalone instances behind a round-robin proxy inside the container — one extra hop, and each instance is single-threaded
 - PostgreSQL `max_connections=500` in all setups
 - Absolute numbers will be higher on bare metal (benchmarks run on WSL2)
