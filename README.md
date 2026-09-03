@@ -21,7 +21,7 @@ Benchmark comparing different PHP server adapters and Node.js servers under load
 |--------------------------|----------------------------------------------------------------------------------------|
 | `GET /hello`             | Pure JSON response, no DB                                                              |
 | `GET /test`              | One DB query (`SELECT pg_sleep(0.01)`, simulates 10ms DB latency)                      |
-| `GET /bench`             | 5 DB queries: SELECT user, SELECT posts, INSERT view, UPDATE counter, SELECT aggregate |
+| `GET /bench`             | 10 DB queries: 7 concurrent reads, 2 concurrent writes, and 1 aggregate read            |
 | `GET /debug/connections` | Live PostgreSQL connection stats (active, idle, total vs max) — TrueAsync + Node.js |
 
 ---
@@ -52,7 +52,7 @@ cd fpm
 docker compose build
 docker compose run --rm php composer install --ignore-platform-reqs
 
-# 2. Start services
+# 2. Start services (production config and route caches are built at startup)
 docker compose up -d
 
 # 3. First-time setup
@@ -74,7 +74,7 @@ cd octane_swoole
 docker compose build
 docker compose run --rm app composer install --ignore-platform-reqs
 
-# 2. Start services
+# 2. Start services (production config and route caches are built at startup)
 docker compose up -d
 
 # 3. First-time setup
@@ -101,7 +101,7 @@ cd laravel-spawn
 #    (uses pre-built image — no build step needed)
 docker compose run --rm app composer install --ignore-platform-reqs
 
-# 2. Start the server
+# 2. Start the server (production config and route caches are built at startup)
 docker compose up -d
 
 # 3. First-time setup
@@ -330,6 +330,7 @@ concurrent DB-bound requests without blocking.
 
 - Each adapter has its own PostgreSQL instance on a separate port to avoid interference
 - `APP_DEBUG=false` in all setups for fair comparison
+- Laravel benchmark endpoints use the stateless API middleware group; Laravel targets run with `APP_ENV=production` and cache config/routes at startup
 - OPcache enabled in PHP-FPM
 - Node.js targets run 16 cluster workers (12-core host) with a `pg` pool of max 10 per worker
 - NestJS uses the Express platform (same underlay as the express entry) with its full DI/module/controller stack — a like-for-like match for Laravel/Symfony's framework weight; all entries use raw SQL, no ORM

@@ -17,3 +17,8 @@ COPY docker/www.conf /usr/local/etc/php-fpm.d/www.conf
 
 COPY . .
 RUN chown -R www-data:www-data /app/storage /app/bootstrap/cache
+COPY docker/entrypoint.sh /usr/local/bin/laravel-entrypoint
+RUN chmod +x /usr/local/bin/laravel-entrypoint
+
+ENTRYPOINT ["/usr/local/bin/laravel-entrypoint"]
+CMD ["php-fpm"]

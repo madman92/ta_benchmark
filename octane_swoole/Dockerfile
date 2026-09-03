@@ -24,3 +24,7 @@ COPY --from=builder /app/vendor /app/vendor
 COPY --from=builder /app/composer.lock /app/composer.lock
 COPY . .
 RUN mkdir -p storage/framework/cache storage/framework/views storage/framework/sessions storage/logs storage/octane bootstrap/cache
+COPY docker/entrypoint.sh /usr/local/bin/laravel-entrypoint
+RUN chmod +x /usr/local/bin/laravel-entrypoint
+
+ENTRYPOINT ["/usr/local/bin/laravel-entrypoint"]

@@ -14,7 +14,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile
     environment:
-      APP_ENV: local
+      APP_ENV: production
       APP_DEBUG: "false"
       DB_CONNECTION: pgsql
       DB_HOST: db
