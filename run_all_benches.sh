@@ -150,7 +150,14 @@ for target in "${targets[@]}"; do
     
     # Wait for the server to return 200 OK (DB is ready and server is listening)
     wait_for "$target (ready)" "http://localhost:${port}/hello" 1
+    # DB-backed endpoints must also be ready (hello needs no DB)
+    wait_for "$target (db)" "http://localhost:${port}/test" 1
     popd > /dev/null
+
+    echo "--- Warmup $target (prime OPcache/JIT, pools, pg buffers) ---"
+    for i in $(seq 1 20); do curl -s -o /dev/null "http://localhost:${port}/hello"; done
+    for i in $(seq 1 20); do curl -s -o /dev/null "http://localhost:${port}/test"; done
+    for i in $(seq 1 10); do curl -s -o /dev/null "http://localhost:${port}/bench"; done
 
     echo "--- Running k6 for $target ---"
     sleep 3

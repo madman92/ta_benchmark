@@ -7,7 +7,6 @@ use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\Routing\Attribute\Route;
 use function Async\await_all_or_fail;
 use function Async\spawn;
-use function Async\timeout;
 
 class BenchController
 {
@@ -77,7 +76,7 @@ class BenchController
             spawn(fn() => $this->connection->fetchAllAssociative(
                 'SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC LIMIT 10'
             )),
-        ], timeout(1000));
+        ]);
 
         $postId = !empty($posts) ? $posts[0]['id'] : 1;
 
@@ -90,7 +89,7 @@ class BenchController
                 'UPDATE posts SET views_count = views_count + 1 WHERE id = ?',
                 [$postId]
             )),
-        ], timeout(1000));
+        ]);
 
         $stats = $this->connection->fetchAssociative(
             'SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?',

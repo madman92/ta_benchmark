@@ -39,7 +39,13 @@ if (cluster.isPrimary) {
     let next = 0;
 
     const server = http.createServer((req, res) => {
-        const port = INTERNAL_BASE + (next % WORKERS);
+        const ports = [...portByWorker.values()];
+        if (ports.length === 0) {
+            res.writeHead(502);
+            res.end();
+            return;
+        }
+        const port = ports[next % ports.length];
         next++;
         const upstream = http.request(
             {

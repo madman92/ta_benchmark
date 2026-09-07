@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use Illuminate\Support\Facades\DB;
 use function Async\await_all_or_fail;
 use function Async\spawn;
-use function Async\timeout;
 
 final class BenchmarkController extends Controller
 {
@@ -84,7 +83,7 @@ final class BenchmarkController extends Controller
             spawn(fn() => DB::select(
                 'SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC LIMIT 10'
             )),
-        ], timeout(1000));
+        ]);
 
         $postId = !empty($posts) ? $posts[0]->id : 1;
 
@@ -94,7 +93,7 @@ final class BenchmarkController extends Controller
                 [$postId, '10.0.' . rand(0, 255) . '.' . rand(0, 255)]
             )),
             spawn(fn() => DB::update('UPDATE posts SET views_count = views_count + 1 WHERE id = ?', [$postId])),
-        ], timeout(1000));
+        ]);
 
         $stats = DB::selectOne(
             'SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?',
