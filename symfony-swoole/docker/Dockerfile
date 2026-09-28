@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libpq-dev git u
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
-COPY composer.json symfony.lock ./
+COPY composer.json composer.lock symfony.lock ./
 RUN composer install --no-dev --no-interaction --optimize-autoloader --no-scripts
 
 FROM phpswoole/swoole:php8.5-zts

@@ -10,4 +10,5 @@ services:
 
     App\Service\DoctrinePool:
         arguments:
-            $maxSize: 500
+            # 16 workers x 10 connections leaves room for DBAL and administration.
+            $maxSize: 10

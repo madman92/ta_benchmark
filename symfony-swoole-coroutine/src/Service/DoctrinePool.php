@@ -12,7 +12,7 @@ class DoctrinePool
 {
     private ClientPool $pool;
 
-    public function __construct(int $maxSize = 500)
+    public function __construct(int $maxSize = 10)
     {
         $config = (new PostgresConfig())
             ->withHost(getenv('DB_HOST'))
@@ -53,30 +53,47 @@ class DoctrinePool
     private function fetchAssoc(PostgreSQL $pg, string $sql, array $params): array|false
     {
         $stmt = $this->execute($pg, $sql, $params);
-        return $stmt !== false ? $stmt->fetchAssoc() : false;
+        return $stmt->fetchAssoc();
     }
 
     private function fetchAll(PostgreSQL $pg, string $sql, array $params): array
     {
         $stmt = $this->execute($pg, $sql, $params);
-        return $stmt !== false ? $stmt->fetchAll() : [];
+        $rows = $stmt->fetchAll();
+        if ($rows === false) {
+            throw new \RuntimeException('PostgreSQL result fetch failed');
+        }
+
+        return $rows;
     }
 
     private function affectedRows(PostgreSQL $pg, string $sql, array $params): int
     {
         $stmt = $this->execute($pg, $sql, $params);
-        return $stmt !== false ? $stmt->affectedRows() : 0;
+        return $stmt->affectedRows();
     }
 
-    private function execute(PostgreSQL $pg, string $sql, array $params): PostgreSQLStatement|false
+    private function execute(PostgreSQL $pg, string $sql, array $params): PostgreSQLStatement
     {
         if (empty($params)) {
-            return $pg->query($sql);
+            $stmt = $pg->query($sql);
+            if ($stmt === false) {
+                throw new \RuntimeException('PostgreSQL query failed');
+            }
+
+            return $stmt;
         }
 
         $stmt = $pg->prepare(self::withNamedParams($sql));
 
-        return $stmt !== false && $stmt->execute($params) ? $stmt : false;
+        if ($stmt === false) {
+            throw new \RuntimeException('PostgreSQL statement preparation failed');
+        }
+        if (!$stmt->execute($params)) {
+            throw new \RuntimeException('PostgreSQL statement execution failed');
+        }
+
+        return $stmt;
     }
 
     private static function withNamedParams(string $sql): string

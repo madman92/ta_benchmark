@@ -73,7 +73,7 @@ wait_for() {
     if [ "$expect_200" -eq 1 ]; then
         curl_opts="-sf"
     fi
-    while ! curl $curl_opts -o /dev/null "$url" 2>/dev/null; do
+    while ! curl $curl_opts --connect-timeout 2 --max-time 5 -o /dev/null "$url" 2>/dev/null; do
         i=$((i + 1))
         if [ $i -ge $max ]; then
             echo " FAILED"
@@ -155,9 +155,9 @@ for target in "${targets[@]}"; do
     popd > /dev/null
 
     echo "--- Warmup $target (prime OPcache/JIT, pools, pg buffers) ---"
-    for i in $(seq 1 20); do curl -s -o /dev/null "http://localhost:${port}/hello"; done
-    for i in $(seq 1 20); do curl -s -o /dev/null "http://localhost:${port}/test"; done
-    for i in $(seq 1 10); do curl -s -o /dev/null "http://localhost:${port}/bench"; done
+    for i in $(seq 1 20); do curl -sf --connect-timeout 2 --max-time 5 -o /dev/null "http://localhost:${port}/hello"; done
+    for i in $(seq 1 20); do curl -sf --connect-timeout 2 --max-time 5 -o /dev/null "http://localhost:${port}/test"; done
+    for i in $(seq 1 10); do curl -sf --connect-timeout 2 --max-time 5 -o /dev/null "http://localhost:${port}/bench"; done
 
     echo "--- Running k6 for $target ---"
     sleep 3

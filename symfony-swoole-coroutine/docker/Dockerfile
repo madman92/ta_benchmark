@@ -6,7 +6,7 @@ RUN apk add --no-cache postgresql-dev libcurl curl-dev git unzip \
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
-COPY composer.json symfony.lock ./
+COPY composer.json composer.lock symfony.lock ./
 RUN composer install --no-dev --no-interaction --optimize-autoloader --no-scripts --ignore-platform-req=ext-openswoole
 
 FROM openswoole/openswoole:26.2-php8.5-alpine
