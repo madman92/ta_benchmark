@@ -1,0 +1,14 @@
+parameters:
+
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+
+    App\:
+        resource: '../src/'
+
+    App\Service\DoctrinePool:
+        arguments:
+            # 16 workers x 10 connections leaves room for DBAL and administration.
+            $maxSize: 10

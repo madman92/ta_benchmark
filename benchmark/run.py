@@ -21,9 +21,10 @@ TARGETS = {
     'octane_swoole': 8084, 'symfony-spawn': 8085, 'symfony-swoole': 8087,
     'symfony-swoole-coroutine': 8088,
     'nodejs-express': 8090, 'nodejs-nestjs': 8091, 'nodejs-nextjs': 8092,
+    'symfony-openswoole-bundle': 8093,
 }
 ASYNC = {'laravel-spawn', 'symfony-spawn', 'symfony-swoole-coroutine',
-         'nodejs-express', 'nodejs-nestjs', 'nodejs-nextjs'}
+         'nodejs-express', 'nodejs-nestjs', 'nodejs-nextjs', 'symfony-openswoole-bundle'}
 
 
 def command(args, **kwargs):
@@ -167,6 +168,11 @@ class Trial:
             self.sql((ROOT / 'benchmark/schema.sql').read_text())
             self.reset()
             self.compose('up', '-d', '--build', stdout=log, stderr=subprocess.STDOUT)
+        self.wait_ready()
+        (self.directory / 'images.json').write_text(self.compose('images', '--format', 'json', capture_output=True).stdout)
+        (self.directory / 'database.txt').write_text(self.sql('SELECT version(); SHOW max_connections;'))
+
+    def wait_ready(self):
         deadline = time.monotonic() + 120
         ready = 0
         # Next's proxy cycles through sixteen independently booting servers.
@@ -191,8 +197,16 @@ class Trial:
                         'memory_consumption': '128', 'jit': 'disable'}
             if runtime.get('opcache') != expected:
                 raise RuntimeError(f'{self.target}: OPcache configuration differs: {runtime}')
-        (self.directory / 'images.json').write_text(self.compose('images', '--format', 'json', capture_output=True).stdout)
-        (self.directory / 'database.txt').write_text(self.sql('SELECT version(); SHOW max_connections;'))
+
+    def restart_application(self):
+        # A client timeout does not cancel server handlers. Stop all serving
+        # processes before resetting, so abandoned handlers cannot write later.
+        services = ['nginx', 'php'] if self.target == 'fpm' else ['app']
+        with (self.directory / 'restarts.log').open('a') as log:
+            self.compose('stop', '-t', '10', *services, stdout=log, stderr=subprocess.STDOUT)
+            self.reset()
+            self.compose('start', *services, stdout=log, stderr=subprocess.STDOUT)
+        self.wait_ready()
 
     def verify(self, mode):
         self.reset()
@@ -218,6 +232,7 @@ class Trial:
     def run(self, mode, rate):
         folder = self.directory / f'{mode}-{rate}'
         folder.mkdir()
+        self.restart_application()
         env = {**os.environ, 'BASE_URL': self.base, 'MODE': 'async' if mode == 'async' else 'sequential'}
         warmup_summary = folder / 'warmup-summary.json'
         env['SUMMARY_FILE'] = str(warmup_summary)
@@ -232,6 +247,7 @@ class Trial:
         warmup_passed = warmup_result.returncode == 0 and warmup_checks == 1 and warmup_errors == 0
         if not warmup_passed:
             print(f'  warmup failed validation; measurement will be marked failed. See {folder / "warmup.log"}', flush=True)
+            self.restart_application()
         # Quiescent reset after concurrent warmup: every measurement starts at the same state.
         self.reset()
         summary = folder / 'summary.json'
@@ -259,6 +275,11 @@ class Trial:
     def stop(self):
         with (self.directory / 'containers.log').open('w') as log:
             subprocess.run(self.cmd + ['logs', '--no-color'], stdout=log, stderr=subprocess.STDOUT)
+            if not self.target.startswith('nodejs'):
+                path = 'var/log' if self.target.startswith('symfony') else 'storage/logs'
+                subprocess.run(self.cmd + ['cp', f'{self.service}:/app/{path}',
+                                          str(self.directory / 'application-logs')],
+                               stdout=log, stderr=subprocess.STDOUT)
         self.compose('down', '-v', '--remove-orphans')
 
 
@@ -268,7 +289,7 @@ def main():
         raise ValueError(f'Choose unique targets from: {", ".join(TARGETS)}')
     repeats = int(os.getenv('REPEATS', '1'))
     rates = sorted(set(map(int, os.getenv('RATES', '2000').split())))
-    mixed_rates = sorted(set(map(int, os.getenv('MIXED_RATES', '2000').split())))
+    mixed_rates = sorted(set(map(int, os.getenv('MIXED_RATES', '3000').split())))
     if repeats < 1 or not rates or min(rates) < 1 or not mixed_rates or min(mixed_rates) < 2:
         raise ValueError('REPEATS and RATES must be positive; MIXED_RATES must be at least 2')
     os.environ.setdefault('DURATION', '30s')

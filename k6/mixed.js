@@ -1,7 +1,7 @@
 import { arrival, thresholds } from './common.js';
 export { testHello, testDb } from './common.js';
 
-const rate = Number(__ENV.RATE || 2000);
+const rate = Number(__ENV.RATE || 3000);
 if (!Number.isInteger(rate) || rate < 2) throw new Error('Mixed RATE must be an integer of at least 2');
 const helloRate = Math.floor(rate * 0.7);
 

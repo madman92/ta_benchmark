@@ -1,0 +1,21 @@
+swoole:
+    http_server:
+        host: '0.0.0.0'
+        port: 8080
+        exception_handler:
+            type: symfony
+            verbosity: default
+        static: off
+        hmr:
+            enabled: off
+        settings:
+            worker_count: 16
+            worker_max_request: 0
+    platform:
+        fiber_context:
+            enabled: 'on'
+        coroutines:
+            enabled: true
+            max_coroutines: 100000
+            doctrine_processor_config:
+                global_limit: 10

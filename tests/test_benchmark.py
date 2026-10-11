@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('runner', ROOT / 'benchmark/run.py')
@@ -12,12 +13,25 @@ spec.loader.exec_module(runner)
 
 
 class ContractTests(unittest.TestCase):
+    def test_reset_happens_only_after_serving_processes_stop(self):
+        for target, services in [('fpm', ['nginx', 'php']), ('nodejs-express', ['app'])]:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as tmp:
+                trial = object.__new__(runner.Trial)
+                trial.target, trial.directory = target, Path(tmp)
+                events = []
+                trial.compose = Mock(side_effect=lambda *args, **kwargs: events.append(args))
+                trial.reset = Mock(side_effect=lambda: events.append(('reset',)))
+                trial.wait_ready = Mock(side_effect=lambda: events.append(('ready',)))
+                trial.restart_application()
+                self.assertEqual(events, [('stop', '-t', '10', *services), ('reset',),
+                                          ('start', *services), ('ready',)])
+
     def test_every_adapter_uses_same_ten_queries_in_same_order(self):
         files = (list(ROOT.glob('*/app/Http/Controllers/BenchmarkController.php')) +
                  list(ROOT.glob('*/src/Controller/BenchController.php')) +
                  [ROOT / 'nodejs-express/server.js',
                   ROOT / 'nodejs-nestjs/src/bench/bench.service.ts', ROOT / 'nodejs-nextjs/lib/bench.ts'])
-        self.assertEqual(len(files), 10)
+        self.assertEqual(len(files), 11)
         reference = None
         for file in files:
             text = file.read_text()

@@ -27,7 +27,8 @@ Laravel TrueAsync uses an explicit FrankenPHP configuration with ten request que
 | symfony-spawn | 8085 | TrueAsync PHP 8.6 FrankenPHP | Yes |
 | octane_frankenphp | 8086 | PHP 8.5 FrankenPHP | No |
 | symfony-swoole | 8087 | PHP 8.5 Swoole | No |
-| symfony-swoole-coroutine | 8088 | PHP 8.5 OpenSwoole | Yes |
+| symfony-swoole-coroutine | 8088 | PHP 8.5 OpenSwoole, silpo-tech bundle | Yes |
+| symfony-openswoole-bundle | 8093 | PHP 8.5 OpenSwoole, symfony-swoole bundle | Yes |
 | nodejs-express | 8090 | Node 24 | Yes |
 | nodejs-nestjs | 8091 | Node 24 | Yes |
 | nodejs-nextjs | 8092 | Node 24, 16 instances behind a local proxy | Yes |
@@ -49,9 +50,9 @@ REPEATS=1 RATES=20 DURATION=3s WARMUP_DURATION=2s WARMUP_VUS=32 VUS=100 \
   ./run_all_benches.sh fpm nodejs-express
 ```
 
-The default is a single-repeat comparison: 26 measurements across all 10 targets, about **15 minutes 10 seconds** of warmup and measurement plus build, startup and drain time. It does not establish repeat-based confidence. Use existing environment variables for longer runs; there are no profiles.
+The default is a single-repeat comparison: 29 measurements across all 11 targets, about **16 minutes 55 seconds** of warmup and measurement plus build, startup and drain time. It does not establish repeat-based confidence. Use existing environment variables for longer runs; there are no profiles.
 
-To investigate mixed capacity, use `MIXED_RATES="2000 4000 6000" ./run_all_benches.sh`; this adds mixed measurements while keeping database benchmark rates unchanged.
+To investigate mixed capacity, use `MIXED_RATES="3000 4000 6000" ./run_all_benches.sh`; this adds mixed measurements while keeping database benchmark rates unchanged.
 
 Defaults:
 
@@ -59,7 +60,7 @@ Defaults:
 |---|---|---|
 | `REPEATS` | `1` | Independent runs per target |
 | `RATES` | `2000` | Offered `/bench` and `/bench-async` req/s |
-| `MIXED_RATES` | `2000` | Total mixed req/s; supports space-separated rates |
+| `MIXED_RATES` | `3000` | Total mixed req/s; supports space-separated rates |
 | `DURATION` | `30s` | Measurement duration per workload/rate |
 | `WARMUP_DURATION` | `5s` | Concurrent warmup before each measurement |
 | `WARMUP_VUS` | `64` | Warmup concurrency |
@@ -70,7 +71,7 @@ Defaults:
 | `DB_CPUS` / `DB_MEMORY` | `2` / `2048m` | PostgreSQL CPU quota and memory budget |
 | `RESULTS_DIR` | New directory under `results/` | Must not already exist |
 
-The mixed workload defaults to 1,400 `/hello` + 600 `/test` requests/s in separate scenarios. `MIXED_RATES` scales the same 70% / 30% split (rounding hello down for nonmultiples of ten). Its default aggregate P95 limit is 200 ms; `/bench` is 500 ms. `P95_MS` overrides the aggregate limit; mixed per-endpoint P95 limits remain 200 ms. Passing requires all body/status checks, HTTP error rate below 1%, and zero dropped iterations. All VUs are preallocated to avoid allocation bursts during measurement.
+The mixed workload defaults to 2,100 `/hello` + 900 `/test` requests/s in separate scenarios. `MIXED_RATES` scales the same 70% / 30% split (rounding hello down for nonmultiples of ten). Its default aggregate P95 limit is 200 ms; `/bench` is 500 ms. `P95_MS` overrides the aggregate limit; mixed per-endpoint P95 limits remain 200 ms. Passing requires all body/status checks, HTTP error rate below 1%, and zero dropped iterations. All VUs are preallocated to avoid allocation bursts during measurement.
 
 For FPM, the application budget includes nginx (0.5 CPU and 256 MiB); PHP receives the remainder. Other adapters include their server/proxy within their app container. PostgreSQL uses the same `postgres:17-alpine` image family and `max_connections=500` everywhere. CPU quotas are not CPU affinity: k6 and the database still share the host. Monitor the load generator and use a quiet host with sufficient memory before interpreting saturation.
 
@@ -79,7 +80,7 @@ For FPM, the application budget includes nginx (0.5 CPU and 256 MiB); PHP receiv
 1. Starts a dedicated database, creates the common schema/fixture, builds and starts the app.
 2. Checks DB readiness and retrieves `/debug/runtime` from the serving process. PHP must have OPcache enabled, 128 MiB, timestamp checks disabled, and JIT disabled. A mismatch stops the run.
 3. Calls each supported benchmark mode in isolation, validates its response, and queries PostgreSQL to prove exactly one counter increment and the expected view update, with unchanged row counts. Passing load runs also verify the total counter increments against the completed request count.
-4. Performs concurrent warmup before every measurement, drains requests, then resets and analyzes the common fixture. Resetting also removes accumulated table/index bloat between measurements.
+4. Stops serving processes and resets the fixture before each workload, then starts them again to prevent abandoned requests from writing into the next trial. Performs concurrent warmup before every measurement, drains requests, then resets and analyzes the common fixture. Resetting also removes accumulated table/index bloat between measurements.
 5. Runs each offered rate in shuffled order, retaining threshold failures as failed trials. Warmup threshold failures also mark the trial failed, but measurements and remaining targets continue. Warmup metrics are retained in `warmup-summary.json`; invalid response samples are logged in `warmup.log` or `k6.log` (up to nine per run). Execution/setup failures stop the run and retain logs.
 6. Writes raw summaries, per-scenario metrics, exit status, runtime details, image IDs, fixture hash, a source archive including untracked files, source changes, execution order, and logs under `results/`. Reports medians and min–max across trials.
 
@@ -114,6 +115,10 @@ k6 inspect k6/bench.js
 ```
 
 `RESULTS.md` and `benchmark_results.md` contain historical results from earlier workloads/configurations. New runs are deliberately written elsewhere.
+
+## Swoole comparison
+
+`./run_all_benches.sh octane_swoole symfony-swoole symfony-swoole-coroutine symfony-openswoole-bundle` compares the four Swoole deployments with the same fixture, offered rates and resource budgets. The new target uses [symfony-swoole/swoole-bundle](https://github.com/symfony-swoole/swoole-bundle) 0.35.3 with OpenSwoole 26.2, coroutine service isolation and a ten-connection native PostgreSQL pool per worker. It retains the same sequential and async SQL workloads. Its `/test` uses a coroutine-isolated Doctrine connection, provided by resetter-bundle 2.1.1. This is a comparison of complete deployments and integrations, not just the server extension.
 
 Updated package versions are recorded in [benchmark/DEPENDENCIES.md](benchmark/DEPENDENCIES.md).
 
