@@ -6,7 +6,6 @@ const now = () => new Date().toISOString();
 
 @Injectable()
 export class BenchService {
-    private peakHeap = 0;
 
     constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
@@ -26,39 +25,36 @@ export class BenchService {
         };
     }
 
-    async bench() {
+    async bench(parallel = false) {
         const userId = Math.floor(Math.random() * 100) + 1;
         const otherUserId = (userId % 100) + 1;
 
-        const [user, posts, topPosts, leaderboard, otherUser, otherPosts, recentViews] = await Promise.all([
-            this.pool.query('SELECT id, name, email FROM users WHERE id = $1', [userId]),
-            this.pool.query('SELECT id, title, views_count FROM posts WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10', [userId]),
-            this.pool.query('SELECT id, title, views_count FROM posts ORDER BY views_count DESC LIMIT 5'),
-            this.pool.query('SELECT user_id, COUNT(*)::int AS post_count FROM posts GROUP BY user_id ORDER BY post_count DESC LIMIT 5'),
-            this.pool.query('SELECT id, name, email FROM users WHERE id = $1', [otherUserId]),
-            this.pool.query('SELECT id, title FROM posts WHERE user_id = $1 LIMIT 5', [otherUserId]),
-            this.pool.query('SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC LIMIT 10'),
-        ]);
+        const [user, posts, topPosts, leaderboard, otherUser, otherPosts, recentViews] = await runQueries([
+            () => this.pool.query('SELECT id, name, email FROM users WHERE id = $1', [userId]),
+            () => this.pool.query('SELECT id, title, views_count FROM posts WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT 10', [userId]),
+            () => this.pool.query('SELECT id, title, views_count FROM posts ORDER BY views_count DESC, id DESC LIMIT 5'),
+            () => this.pool.query('SELECT user_id, COUNT(*) AS post_count FROM posts GROUP BY user_id ORDER BY post_count DESC, user_id ASC LIMIT 5'),
+            () => this.pool.query('SELECT id, name, email FROM users WHERE id = $1', [otherUserId]),
+            () => this.pool.query('SELECT id, title FROM posts WHERE user_id = $1 ORDER BY id LIMIT 5', [otherUserId]),
+            () => this.pool.query('SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC, id DESC LIMIT 10'),
+        ], parallel);
 
         const postId = posts.rows.length > 0 ? posts.rows[0].id : 1;
 
-        await Promise.all([
-            this.pool.query(
-                'INSERT INTO post_views (post_id, ip_address, viewed_at) VALUES ($1, $2, NOW())',
-                [postId, `10.0.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}`]
+        await runQueries([
+            () => this.pool.query(
+                'UPDATE post_views SET ip_address = $1, viewed_at = NOW() WHERE id = $2',
+                [`10.0.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}`, postId]
             ),
-            this.pool.query(
+            () => this.pool.query(
                 'UPDATE posts SET views_count = views_count + 1 WHERE id = $1', [postId]
             ),
-        ]);
+        ], parallel);
 
         const stats = await this.pool.query(
-            'SELECT COUNT(*)::int AS total_views, MAX(viewed_at) AS last_view FROM post_views WHERE post_id = $1',
+            'SELECT COUNT(*) AS total_views, MAX(viewed_at) AS last_view FROM post_views WHERE post_id = $1',
             [postId]
         );
-
-        const heapUsed = process.memoryUsage().heapUsed;
-        this.peakHeap = Math.max(this.peakHeap, heapUsed);
 
         return {
             user: user.rows[0]?.name ?? null,
@@ -70,8 +66,7 @@ export class BenchService {
             other_posts: otherPosts.rows.length,
             recent_views: recentViews.rows.length,
             queries: 10,
-            memory_usage: heapUsed,
-            memory_peak: this.peakHeap,
+            mode: parallel ? 'async' : 'sequential',
             time: now(),
         };
     }
@@ -96,4 +91,11 @@ export class BenchService {
             time: now(),
         };
     }
+}
+
+async function runQueries(queries: Array<() => Promise<import('pg').QueryResult>>, parallel: boolean) {
+    if (parallel) return Promise.all(queries.map(query => query()));
+    const results: import('pg').QueryResult[] = [];
+    for (const query of queries) results.push(await query());
+    return results;
 }

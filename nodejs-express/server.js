@@ -19,7 +19,6 @@ const now = () => new Date().toISOString();
 
 function buildApp() {
     const pool = new pg.Pool(DB_CONFIG);
-    let peakHeap = 0;
 
     const app = express();
     app.disable('x-powered-by');
@@ -40,41 +39,38 @@ function buildApp() {
         });
     });
 
-    app.get('/bench', async (req, res) => {
+    async function bench(parallel = false) {
         const userId = Math.floor(Math.random() * 100) + 1;
         const otherUserId = (userId % 100) + 1;
 
-        const [user, posts, topPosts, leaderboard, otherUser, otherPosts, recentViews] = await Promise.all([
-            pool.query('SELECT id, name, email FROM users WHERE id = $1', [userId]),
-            pool.query('SELECT id, title, views_count FROM posts WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10', [userId]),
-            pool.query('SELECT id, title, views_count FROM posts ORDER BY views_count DESC LIMIT 5'),
-            pool.query('SELECT user_id, COUNT(*)::int AS post_count FROM posts GROUP BY user_id ORDER BY post_count DESC LIMIT 5'),
-            pool.query('SELECT id, name, email FROM users WHERE id = $1', [otherUserId]),
-            pool.query('SELECT id, title FROM posts WHERE user_id = $1 LIMIT 5', [otherUserId]),
-            pool.query('SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC LIMIT 10'),
-        ]);
+        const [user, posts, topPosts, leaderboard, otherUser, otherPosts, recentViews] = await runQueries([
+            () => pool.query('SELECT id, name, email FROM users WHERE id = $1', [userId]),
+            () => pool.query('SELECT id, title, views_count FROM posts WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT 10', [userId]),
+            () => pool.query('SELECT id, title, views_count FROM posts ORDER BY views_count DESC, id DESC LIMIT 5'),
+            () => pool.query('SELECT user_id, COUNT(*) AS post_count FROM posts GROUP BY user_id ORDER BY post_count DESC, user_id ASC LIMIT 5'),
+            () => pool.query('SELECT id, name, email FROM users WHERE id = $1', [otherUserId]),
+            () => pool.query('SELECT id, title FROM posts WHERE user_id = $1 ORDER BY id LIMIT 5', [otherUserId]),
+            () => pool.query('SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC, id DESC LIMIT 10'),
+        ], parallel);
 
         const postId = posts.rows.length > 0 ? posts.rows[0].id : 1;
 
-        await Promise.all([
-            pool.query(
-                'INSERT INTO post_views (post_id, ip_address, viewed_at) VALUES ($1, $2, NOW())',
-                [postId, `10.0.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}`]
+        await runQueries([
+            () => pool.query(
+                'UPDATE post_views SET ip_address = $1, viewed_at = NOW() WHERE id = $2',
+                [`10.0.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}`, postId]
             ),
-            pool.query(
+            () => pool.query(
                 'UPDATE posts SET views_count = views_count + 1 WHERE id = $1', [postId]
             ),
-        ]);
+        ], parallel);
 
         const stats = await pool.query(
-            'SELECT COUNT(*)::int AS total_views, MAX(viewed_at) AS last_view FROM post_views WHERE post_id = $1',
+            'SELECT COUNT(*) AS total_views, MAX(viewed_at) AS last_view FROM post_views WHERE post_id = $1',
             [postId]
         );
 
-        const heapUsed = process.memoryUsage().heapUsed;
-        peakHeap = Math.max(peakHeap, heapUsed);
-
-        res.json({
+        return {
             user: user.rows[0]?.name ?? null,
             posts: posts.rows.length,
             views: Number(stats.rows[0]?.total_views ?? 0),
@@ -84,11 +80,13 @@ function buildApp() {
             other_posts: otherPosts.rows.length,
             recent_views: recentViews.rows.length,
             queries: 10,
-            memory_usage: heapUsed,
-            memory_peak: peakHeap,
+            mode: parallel ? 'async' : 'sequential',
             time: now(),
-        });
-    });
+        };
+    }
+
+    app.get('/bench', async (req, res) => res.json(await bench(false)));
+    app.get('/bench-async', async (req, res) => res.json(await bench(true)));
 
     app.get('/debug/connections', async (req, res) => {
         const byState = await pool.query(`
@@ -111,6 +109,8 @@ function buildApp() {
         });
     });
 
+    app.get('/debug/runtime', (req, res) => res.json({ version: process.version, versions: process.versions, workers: WORKERS, pool_max: DB_CONFIG.max }));
+
     return app;
 }
 
@@ -125,4 +125,10 @@ if (cluster.isPrimary) {
     });
 } else {
     buildApp().listen(PORT, '0.0.0.0');
+}
+async function runQueries(queries, parallel) {
+    if (parallel) return Promise.all(queries.map(query => query()));
+    const results = [];
+    for (const query of queries) results.push(await query());
+    return results;
 }

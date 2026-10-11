@@ -5,7 +5,7 @@ services:
       context: .
       dockerfile: Dockerfile
     working_dir: /app
-    command: php artisan async:franken --host=0.0.0.0 --port=8080 --workers=16
+    command: frankenphp run --config /app/docker/Caddyfile --adapter caddyfile
     ports:
       - "8083:8080"
     environment:

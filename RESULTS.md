@@ -1,3 +1,5 @@
+> Historical results: these measurements predate the shared bounded fixture and sequential baseline. They are not comparable to the current harness. See README.md for the current method.
+
 # Benchmark: TrueAsync vs Octane Swoole vs Octane FrankenPHP
 
 **Date:** 2026-04-03  

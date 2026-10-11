@@ -35,68 +35,56 @@ class BenchController
     #[Route('/bench')]
     public function bench(): JsonResponse
     {
+        return $this->runBench(false);
+    }
+
+    private function runBench(bool $parallel): JsonResponse
+    {
         $userId = rand(1, 100);
-
-        $user = $this->connection->fetchAssociative(
-            'SELECT id, name, email FROM users WHERE id = ?', [$userId]
-        );
-
-        $posts = $this->connection->fetchAllAssociative(
-            'SELECT id, title, views_count FROM posts WHERE user_id = ? ORDER BY created_at DESC LIMIT 10',
-            [$userId]
-        );
-
-        $postId = !empty($posts) ? $posts[0]['id'] : 1;
-
-        $this->connection->executeStatement(
-            'INSERT INTO post_views (post_id, ip_address, viewed_at) VALUES (?, ?, NOW())',
-            [$postId, '10.0.' . rand(0, 255) . '.' . rand(0, 255)]
-        );
-
-        $this->connection->executeStatement(
-            'UPDATE posts SET views_count = views_count + 1 WHERE id = ?', [$postId]
-        );
-
-        $stats = $this->connection->fetchAssociative(
-            'SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?',
-            [$postId]
-        );
-
-        $topPosts = $this->connection->fetchAllAssociative(
-            'SELECT id, title, views_count FROM posts ORDER BY views_count DESC LIMIT 5'
-        );
-
-        $leaderboard = $this->connection->fetchAllAssociative(
-            'SELECT user_id, COUNT(*) as post_count FROM posts GROUP BY user_id ORDER BY post_count DESC LIMIT 5'
-        );
-
         $otherUserId = ($userId % 100) + 1;
-        $otherUser = $this->connection->fetchAssociative(
-            'SELECT id, name, email FROM users WHERE id = ?', [$otherUserId]
-        );
 
-        $otherPosts = $this->connection->fetchAllAssociative(
-            'SELECT id, title FROM posts WHERE user_id = ? LIMIT 5', [$otherUserId]
-        );
+        // All reads precede writes in both modes. Only scheduling differs.
+        [$user, $posts, $topPosts, $leaderboard, $otherUser, $otherPosts, $recentViews] = $this->runQueries([
+            fn() => $this->connection->fetchAssociative('SELECT id, name, email FROM users WHERE id = ?', [$userId]),
+            fn() => $this->connection->fetchAllAssociative('SELECT id, title, views_count FROM posts WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 10', [$userId]),
+            fn() => $this->connection->fetchAllAssociative('SELECT id, title, views_count FROM posts ORDER BY views_count DESC, id DESC LIMIT 5'),
+            fn() => $this->connection->fetchAllAssociative('SELECT user_id, COUNT(*) as post_count FROM posts GROUP BY user_id ORDER BY post_count DESC, user_id ASC LIMIT 5'),
+            fn() => $this->connection->fetchAssociative('SELECT id, name, email FROM users WHERE id = ?', [$otherUserId]),
+            fn() => $this->connection->fetchAllAssociative('SELECT id, title FROM posts WHERE user_id = ? ORDER BY id LIMIT 5', [$otherUserId]),
+            fn() => $this->connection->fetchAllAssociative('SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC, id DESC LIMIT 10'),
+        ], $parallel);
 
-        $recentViews = $this->connection->fetchAllAssociative(
-            'SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC LIMIT 10'
-        );
+        $postId = $posts[0]['id'];
+        $ip = '10.0.' . rand(0, 255) . '.' . rand(0, 255);
+        $this->runQueries([
+            fn() => $this->connection->executeStatement('UPDATE post_views SET ip_address = ?, viewed_at = NOW() WHERE id = ?', [$ip, $postId]),
+            fn() => $this->connection->executeStatement('UPDATE posts SET views_count = views_count + 1 WHERE id = ?', [$postId]),
+        ], $parallel);
+
+        $stats = $this->connection->fetchAssociative('SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?', [$postId]);
 
         return new JsonResponse([
             'user' => $user['name'],
             'posts' => count($posts),
-            'views' => $stats['total_views'],
+            'views' => (int) $stats['total_views'],
             'top_posts' => count($topPosts),
             'leaderboard' => count($leaderboard),
             'other_user' => $otherUser['name'],
             'other_posts' => count($otherPosts),
             'recent_views' => count($recentViews),
             'queries' => 10,
-            'memory_usage' => memory_get_usage(),
-            'memory_peak' => memory_get_peak_usage(),
-            'time' => (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
+            'mode' => $parallel ? 'async' : 'sequential',
+            'time' => gmdate('c'),
         ]);
+    }
+
+    private function runQueries(array $queries, bool $parallel): array
+    {
+        $results = [];
+        foreach ($queries as $query) {
+            $results[] = $query();
+        }
+        return $results;
     }
 
     #[Route('/debug/connections')]
@@ -121,6 +109,22 @@ class BenchController
             'total' => $total,
             'by_state' => $byState,
             'time' => (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
+        ]);
+    }
+    #[Route('/debug/runtime')]
+    public function runtime(): JsonResponse
+    {
+        return new JsonResponse([
+            'version' => PHP_VERSION,
+            'sapi' => PHP_SAPI,
+            'zts' => (bool) PHP_ZTS,
+            'opcache_loaded' => extension_loaded('Zend OPcache'),
+            'opcache_enabled' => function_exists('opcache_get_status') && (bool) (opcache_get_status(false)['opcache_enabled'] ?? false),
+            'opcache' => array_combine(
+                ['enable', 'enable_cli', 'validate_timestamps', 'memory_consumption', 'jit'],
+                array_map(fn($key) => ini_get('opcache.' . $key),
+                    ['enable', 'enable_cli', 'validate_timestamps', 'memory_consumption', 'jit'])
+            ),
         ]);
     }
 }

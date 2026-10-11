@@ -8,7 +8,7 @@ open_swoole:
         pid_file: '/var/run/openswoole_server.pid'
         log_file: '%kernel.logs_dir%/swoole.log'
         daemonize: false
-        max_request: 200
+        max_request: 0
         document_root: '%kernel.project_dir%/public'
         enable_static_handler: false
         open_http2_protocol: false

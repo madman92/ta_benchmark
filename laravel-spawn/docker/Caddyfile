@@ -1,0 +1,35 @@
+{
+    admin off
+    frankenphp {
+    }
+}
+
+:8080 {
+    root * /app/public
+
+    @static file
+    handle @static {
+        file_server
+    }
+
+    route {
+        php_server {
+            index off
+            file_server off
+            worker {
+                file /app/docker/worker.php
+                num 16
+                async
+                # Absorb bursts without immediately rejecting requests when
+                # the default single-slot dispatch queues fill.
+                buffer_size 10
+                match *
+            }
+        }
+    }
+
+    log {
+        output file /app/storage/logs/frankenphp-access.log
+        level INFO
+    }
+}

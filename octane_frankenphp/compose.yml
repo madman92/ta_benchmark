@@ -5,7 +5,7 @@ services:
       context: .
       dockerfile: Dockerfile
     working_dir: /app
-    command: php artisan octane:start --server=frankenphp --host=0.0.0.0 --port=8080 --workers=16
+    command: php artisan octane:start --server=frankenphp --host=0.0.0.0 --port=8080 --workers=16 --max-requests=1000000000
     ports:
       - "8086:8080"
     environment:

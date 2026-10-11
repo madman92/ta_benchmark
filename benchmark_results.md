@@ -2,30 +2,30 @@
 
 | Framework | Req/s | Median Latency | P95 Latency | Error Rate | Dropped |
 |---|---|---|---|---|---|
-| fpm | 1199.50 | 1.30ms | 16.15ms | 0.00% | 0 |
-| laravel-spawn | 1199.63 | 0.36ms | 10.63ms | 0.00% | 0 |
-| octane_frankenphp | 1199.60 | 0.61ms | 10.87ms | 0.00% | 0 |
-| octane_swoole | 1198.89 | 0.65ms | 10.84ms | 0.00% | 0 |
-| symfony-spawn | 1199.58 | 0.18ms | 10.35ms | 0.00% | 0 |
-| symfony-swoole | 1199.71 | 0.22ms | 10.34ms | 0.00% | 0 |
-| symfony-swoole-coroutine | 1199.62 | 0.32ms | 10.45ms | 0.00% | 0 |
-| nodejs-fastify | 1199.63 | 0.13ms | 10.33ms | 0.00% | 0 |
-| nodejs-express | 1199.63 | 0.16ms | 10.37ms | 0.00% | 0 |
-| nodejs-nestjs | 1199.59 | 0.18ms | 10.39ms | 0.00% | 0 |
-| nodejs-nextjs | 1199.62 | 0.70ms | 11.05ms | 0.00% | 0 |
+| fpm | 1199.43 | 1.29ms | 16.10ms | 0.00% | 0 |
+| laravel-spawn | 1199.59 | 0.37ms | 10.63ms | 0.00% | 0 |
+| octane_frankenphp | 1199.62 | 0.66ms | 10.91ms | 0.00% | 0 |
+| octane_swoole | 1199.59 | 0.74ms | 10.94ms | 0.00% | 0 |
+| symfony-spawn | 1199.63 | 0.17ms | 10.32ms | 0.00% | 0 |
+| symfony-swoole | 1199.57 | 0.22ms | 10.35ms | 0.00% | 0 |
+| symfony-swoole-coroutine | 1199.64 | 0.33ms | 10.45ms | 0.00% | 0 |
+| nodejs-fastify | 1199.61 | 0.13ms | 10.35ms | 0.00% | 0 |
+| nodejs-express | 1199.62 | 0.16ms | 10.39ms | 0.00% | 0 |
+| nodejs-nestjs | 1199.62 | 0.18ms | 10.40ms | 0.00% | 0 |
+| nodejs-nextjs | 1199.65 | 0.64ms | 10.98ms | 0.00% | 0 |
 
 ## /bench Endpoint Results
 
 | Framework | Req/s | Median Latency | P95 Latency | Error Rate | Dropped |
 |---|---|---|---|---|---|
-| fpm | 770.23 | 1352.64ms | 1523.94ms | 17.07% | 6890 |
-| laravel-spawn | 996.15 | 5.85ms | 58.43ms | 0.00% | 55 |
-| octane_frankenphp | 999.18 | 6.82ms | 68.70ms | 0.00% | 12 |
-| octane_swoole | 967.55 | 6.77ms | 96.17ms | 0.00% | 355 |
-| symfony-spawn | 999.77 | 3.49ms | 35.58ms | 0.00% | 0 |
-| symfony-swoole | 998.98 | 5.79ms | 71.56ms | 0.00% | 19 |
-| symfony-swoole-coroutine | 992.32 | 3.98ms | 172.45ms | 0.00% | 215 |
-| nodejs-fastify | 998.70 | 3.76ms | 46.47ms | 0.00% | 35 |
-| nodejs-express | 999.86 | 3.61ms | 41.95ms | 0.00% | 0 |
-| nodejs-nestjs | 999.06 | 4.84ms | 50.38ms | 0.00% | 24 |
-| nodejs-nextjs | 996.92 | 6.62ms | 57.74ms | 0.00% | 88 |
+| fpm | 677.52 | 1454.91ms | 1679.59ms | 4.28% | 9248 |
+| laravel-spawn | 997.75 | 4.14ms | 84.82ms | 0.00% | 61 |
+| octane_frankenphp | 997.12 | 10.28ms | 97.86ms | 0.00% | 65 |
+| octane_swoole | 996.92 | 11.26ms | 117.23ms | 0.00% | 86 |
+| symfony-spawn | 998.12 | 3.53ms | 75.33ms | 0.00% | 48 |
+| symfony-swoole | 998.01 | 5.98ms | 91.45ms | 0.00% | 49 |
+| symfony-swoole-coroutine | 993.60 | 3.93ms | 90.88ms | 0.00% | 46 |
+| nodejs-fastify | 998.19 | 4.35ms | 77.56ms | 0.00% | 41 |
+| nodejs-express | 997.96 | 3.60ms | 83.16ms | 0.00% | 56 |
+| nodejs-nestjs | 997.86 | 3.69ms | 79.67ms | 0.00% | 60 |
+| nodejs-nextjs | 997.76 | 4.22ms | 89.05ms | 0.00% | 62 |

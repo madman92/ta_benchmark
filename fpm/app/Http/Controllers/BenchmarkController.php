@@ -28,58 +28,56 @@ final class BenchmarkController extends Controller
 
     public function bench()
     {
+        return $this->runBench(false);
+    }
+
+    private function runBench(bool $parallel)
+    {
         $userId = rand(1, 100);
-
-        $user = DB::selectOne('SELECT id, name, email FROM users WHERE id = ?', [$userId]);
-        $posts = DB::select(
-            'SELECT id, title, views_count FROM posts WHERE user_id = ? ORDER BY created_at DESC LIMIT 10',
-            [$userId]
-        );
-
-        $postId = !empty($posts) ? $posts[0]->id : 1;
-        DB::insert(
-            'INSERT INTO post_views (post_id, ip_address, viewed_at) VALUES (?, ?, NOW())',
-            [$postId, '10.0.' . rand(0, 255) . '.' . rand(0, 255)]
-        );
-        DB::update('UPDATE posts SET views_count = views_count + 1 WHERE id = ?', [$postId]);
-
-        $stats = DB::selectOne(
-            'SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?',
-            [$postId]
-        );
-        $topPosts = DB::select(
-            'SELECT id, title, views_count FROM posts ORDER BY views_count DESC LIMIT 5'
-        );
-        $leaderboard = DB::select(
-            'SELECT user_id, COUNT(*) as post_count FROM posts GROUP BY user_id ORDER BY post_count DESC LIMIT 5'
-        );
-
         $otherUserId = ($userId % 100) + 1;
-        $otherUser = DB::selectOne('SELECT id, name, email FROM users WHERE id = ?', [$otherUserId]);
-        $otherPosts = DB::select(
-            'SELECT id, title FROM posts WHERE user_id = ? LIMIT 5',
-            [$otherUserId]
-        );
-        $recentViews = DB::select(
-            'SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC LIMIT 10'
-        );
+
+        // All reads precede writes in both modes. Only scheduling differs.
+        [$user, $posts, $topPosts, $leaderboard, $otherUser, $otherPosts, $recentViews] = $this->runQueries([
+            fn() => DB::selectOne('SELECT id, name, email FROM users WHERE id = ?', [$userId]),
+            fn() => DB::select('SELECT id, title, views_count FROM posts WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 10', [$userId]),
+            fn() => DB::select('SELECT id, title, views_count FROM posts ORDER BY views_count DESC, id DESC LIMIT 5'),
+            fn() => DB::select('SELECT user_id, COUNT(*) as post_count FROM posts GROUP BY user_id ORDER BY post_count DESC, user_id ASC LIMIT 5'),
+            fn() => DB::selectOne('SELECT id, name, email FROM users WHERE id = ?', [$otherUserId]),
+            fn() => DB::select('SELECT id, title FROM posts WHERE user_id = ? ORDER BY id LIMIT 5', [$otherUserId]),
+            fn() => DB::select('SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC, id DESC LIMIT 10'),
+        ], $parallel);
+
+        $postId = $posts[0]->id;
+        $ip = '10.0.' . rand(0, 255) . '.' . rand(0, 255);
+        $this->runQueries([
+            fn() => DB::update('UPDATE post_views SET ip_address = ?, viewed_at = NOW() WHERE id = ?', [$ip, $postId]),
+            fn() => DB::update('UPDATE posts SET views_count = views_count + 1 WHERE id = ?', [$postId]),
+        ], $parallel);
+
+        $stats = DB::selectOne('SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?', [$postId]);
 
         return response()->json([
             'user' => $user->name,
             'posts' => count($posts),
-            'views' => $stats->total_views,
+            'views' => (int) $stats->total_views,
             'top_posts' => count($topPosts),
             'leaderboard' => count($leaderboard),
             'other_user' => $otherUser->name,
             'other_posts' => count($otherPosts),
             'recent_views' => count($recentViews),
             'queries' => 10,
-            'memory_usage' => memory_get_usage(),
-            'memory_usage_real' => memory_get_usage(true),
-            'memory_peak' => memory_get_peak_usage(),
-            'memory_peak_real' => memory_get_peak_usage(true),
-            'time' => now()->toIso8601String(),
+            'mode' => $parallel ? 'async' : 'sequential',
+            'time' => gmdate('c'),
         ]);
+    }
+
+    private function runQueries(array $queries, bool $parallel): array
+    {
+        $results = [];
+        foreach ($queries as $query) {
+            $results[] = $query();
+        }
+        return $results;
     }
 
     public function connections()
@@ -119,6 +117,21 @@ final class BenchmarkController extends Controller
             'opcache_enabled' => $status['opcache_enabled'] ?? false,
             'cached_scripts' => $status['opcache_statistics']['num_cached_scripts'] ?? 0,
             'memory_used_mb' => round(($status['memory_usage']['used_memory'] ?? 0) / 1024 / 1024, 1),
+        ]);
+    }
+    public function runtime()
+    {
+        return response()->json([
+            'version' => PHP_VERSION,
+            'sapi' => PHP_SAPI,
+            'zts' => (bool) PHP_ZTS,
+            'opcache_loaded' => extension_loaded('Zend OPcache'),
+            'opcache_enabled' => function_exists('opcache_get_status') && (bool) (opcache_get_status(false)['opcache_enabled'] ?? false),
+            'opcache' => array_combine(
+                ['enable', 'enable_cli', 'validate_timestamps', 'memory_consumption', 'jit'],
+                array_map(fn($key) => ini_get('opcache.' . $key),
+                    ['enable', 'enable_cli', 'validate_timestamps', 'memory_consumption', 'jit'])
+            ),
         ]);
     }
 }

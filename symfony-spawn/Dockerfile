@@ -10,6 +10,8 @@ FROM trueasync/php-true-async:0.8.9-php8.6-frankenphp
 
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
+COPY docker/opcache.ini /etc/php.d/zz-benchmark.ini
+
 WORKDIR /app
 COPY --from=builder /app/vendor /app/vendor
 COPY --from=builder /app/composer.lock /app/composer.lock

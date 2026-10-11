@@ -1,339 +1,116 @@
 # ta_benchmark
 
-Benchmark comparing different PHP server adapters and Node.js servers under load using [k6](https://k6.io).
+Deployment benchmarks for PHP server adapters and Node.js frameworks, using k6 and an identical PostgreSQL fixture.
 
-## Adapters
+## Workloads
 
-| Adapter                              | Port | Workers | Image                                        |
-|--------------------------------------|------|---------|----------------------------------------------|
-| PHP-FPM + nginx                      | 8082 | 12      | `php:8.4-fpm-alpine` + `nginx:alpine`        |
-| Octane Swoole                        | 8084 | 12      | `phpswoole/swoole:5.1-php8.3-alpine`         |
-| laravel-spawn (TrueAsync FrankenPHP) | 8083 | 12      | `trueasync/php-true-async:latest-frankenphp` |
-| symfony-spawn (TrueAsync FrankenPHP) | 8085 | 12      | `trueasync/php-true-async:latest-frankenphp` |
-| nodejs-fastify (cluster)             | 8089 | 16      | `node:24-alpine`                             |
-| nodejs-express (cluster)             | 8090 | 16      | `node:24-alpine`                             |
-| nodejs-nestjs (cluster)              | 8091 | 16      | `node:24-alpine`                             |
-| nodejs-nextjs (16 standalone + proxy)| 8092 | 16      | `node:24-alpine`                             |
+- `/hello`: JSON response, no database.
+- `/test`: one `SELECT pg_sleep(0.01)` query.
+- `/bench`: **ten sequential SQL operations**, in the same order on all targets.
+- `/bench-async`: the same operations, with seven concurrent reads, two concurrent writes, then one aggregate. Available on TrueAsync, Symfony OpenSwoole coroutine, and all Node.js targets. Reported separately.
 
-## Routes tested
+The seven reads fetch a user, ten posts, top posts, a leaderboard, another user, five other posts, and ten recent views. Both writes follow the reads: update a pre-existing view row and increment its post counter. The final query aggregates that post's views. Neither mode promises a transactional snapshot under concurrent requests.
 
-| Route                    | Description                                                                            |
-|--------------------------|----------------------------------------------------------------------------------------|
-| `GET /hello`             | Pure JSON response, no DB                                                              |
-| `GET /test`              | One DB query (`SELECT pg_sleep(0.01)`, simulates 10ms DB latency)                      |
-| `GET /bench`             | 10 DB queries: 7 concurrent reads, 2 concurrent writes, and 1 aggregate read            |
-| `GET /debug/connections` | Live PostgreSQL connection stats (active, idle, total vs max) — TrueAsync + Node.js |
+`benchmark/schema.sql` and `benchmark/reset.sql` are the source of truth: **100 users, 1,000 posts (ten per user), 1,000 view rows**, identical integer types, indexes, timestamps and initial counters. Writes do not add rows. Stable secondary sort keys remove timestamp ties. There is an index for recent views. The former growing INSERT workload and its historical results are not comparable to this workload.
 
----
+## Targets
 
-## Setup
+All targets configure **16 application workers**. This is not equal DB concurrency: blocking deployments generally have one active query per worker, while pooled async targets can use up to ten connections per worker. This architectural difference remains part of the deployment comparison.
 
-### Requirements
+Laravel TrueAsync uses an explicit FrankenPHP configuration with ten request queue slots per worker. The default single-slot queues rejected bursts during concurrent warmup, producing empty responses in the pinned runtime. Worker count and endpoint workloads are unchanged.
 
-- Docker + Docker Compose
-- [k6](https://k6.io/docs/get-started/installation/)
+| Target | Port | Runtime family | Concurrent endpoint |
+|---|---:|---|---|
+| fpm | 8082 | PHP 8.5 FPM + nginx | No |
+| laravel-spawn | 8083 | TrueAsync PHP 8.6 FrankenPHP | Yes |
+| octane_swoole | 8084 | PHP 8.5 Swoole | No |
+| symfony-spawn | 8085 | TrueAsync PHP 8.6 FrankenPHP | Yes |
+| octane_frankenphp | 8086 | PHP 8.5 FrankenPHP | No |
+| symfony-swoole | 8087 | PHP 8.5 Swoole | No |
+| symfony-swoole-coroutine | 8088 | PHP 8.5 OpenSwoole | Yes |
+| nodejs-express | 8090 | Node 24 | Yes |
+| nodejs-nestjs | 8091 | Node 24 | Yes |
+| nodejs-nextjs | 8092 | Node 24, 16 instances behind a local proxy | Yes |
 
-### Clone
+PHP images intentionally retain their supported version families. TrueAsync PHP 8.6 versus PHP 8.5, framework differences, connection lifecycle, and Next.js's proxy mean these are **deployment comparisons**, not isolated measurements of adapter overhead. Do not claim that all runtime costs are equal.
 
-```bash
-git clone https://github.com/YanGusik/ta_benchmark.git
-cd ta_benchmark
-```
+## Run
 
----
-
-### PHP-FPM
+Requirements: Docker with Compose v2, k6, Python 3.10+. Ports listed above and the Compose database ports must be free. The runner creates uniquely named Compose projects and removes only its own containers and volumes. It does not stop existing projects or overwrite `benchmark_results.md`.
 
 ```bash
-cd fpm
+./run_all_benches.sh
 
-# 1. Build the image, then install dependencies before starting
-#    (the container crashes on startup if vendor/ is missing)
-docker compose build
-docker compose run --rm php composer install --ignore-platform-reqs
+# Select targets
+./run_all_benches.sh fpm laravel-spawn nodejs-express
 
-# 2. Start services (production config and route caches are built at startup)
-docker compose up -d
-
-# 3. First-time setup
-docker compose exec php chmod -R 777 /app/storage /app/bootstrap/cache
-docker compose exec php php artisan key:generate
-docker compose exec php php artisan migrate
-docker compose exec php php artisan db:seed --class=BenchmarkSeeder
-curl http://localhost:8082/hello
+# Quick correctness/build smoke test; not suitable for performance claims
+REPEATS=1 RATES=20 DURATION=3s WARMUP_DURATION=2s WARMUP_VUS=32 VUS=100 \
+  ./run_all_benches.sh fpm nodejs-express
 ```
 
----
+The default is a single-repeat comparison: 26 measurements across all 10 targets, about **15 minutes 10 seconds** of warmup and measurement plus build, startup and drain time. It does not establish repeat-based confidence. Use existing environment variables for longer runs; there are no profiles.
 
-### Octane Swoole
+To investigate mixed capacity, use `MIXED_RATES="2000 4000 6000" ./run_all_benches.sh`; this adds mixed measurements while keeping database benchmark rates unchanged.
+
+Defaults:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `REPEATS` | `1` | Independent runs per target |
+| `RATES` | `2000` | Offered `/bench` and `/bench-async` req/s |
+| `MIXED_RATES` | `2000` | Total mixed req/s; supports space-separated rates |
+| `DURATION` | `30s` | Measurement duration per workload/rate |
+| `WARMUP_DURATION` | `5s` | Concurrent warmup before each measurement |
+| `WARMUP_VUS` | `64` | Warmup concurrency |
+| `VUS` | `1000` | Preallocated and maximum VUs per arrival-rate scenario |
+| `REQUEST_TIMEOUT` | `10s` | Request timeout and measurement drain period |
+| `ORDER_SEED` | `42` | Reproducible shuffle of target and workload/rate order |
+| `APP_CPUS` / `APP_MEMORY_MB` | `4` / `2048` | Total application CPU quota and memory budget |
+| `DB_CPUS` / `DB_MEMORY` | `2` / `2048m` | PostgreSQL CPU quota and memory budget |
+| `RESULTS_DIR` | New directory under `results/` | Must not already exist |
+
+The mixed workload defaults to 1,400 `/hello` + 600 `/test` requests/s in separate scenarios. `MIXED_RATES` scales the same 70% / 30% split (rounding hello down for nonmultiples of ten). Its default aggregate P95 limit is 200 ms; `/bench` is 500 ms. `P95_MS` overrides the aggregate limit; mixed per-endpoint P95 limits remain 200 ms. Passing requires all body/status checks, HTTP error rate below 1%, and zero dropped iterations. All VUs are preallocated to avoid allocation bursts during measurement.
+
+For FPM, the application budget includes nginx (0.5 CPU and 256 MiB); PHP receives the remainder. Other adapters include their server/proxy within their app container. PostgreSQL uses the same `postgres:17-alpine` image family and `max_connections=500` everywhere. CPU quotas are not CPU affinity: k6 and the database still share the host. Monitor the load generator and use a quiet host with sufficient memory before interpreting saturation.
+
+## What the runner verifies and retains
+
+1. Starts a dedicated database, creates the common schema/fixture, builds and starts the app.
+2. Checks DB readiness and retrieves `/debug/runtime` from the serving process. PHP must have OPcache enabled, 128 MiB, timestamp checks disabled, and JIT disabled. A mismatch stops the run.
+3. Calls each supported benchmark mode in isolation, validates its response, and queries PostgreSQL to prove exactly one counter increment and the expected view update, with unchanged row counts. Passing load runs also verify the total counter increments against the completed request count.
+4. Performs concurrent warmup before every measurement, drains requests, then resets and analyzes the common fixture. Resetting also removes accumulated table/index bloat between measurements.
+5. Runs each offered rate in shuffled order, retaining threshold failures as failed trials. Warmup threshold failures also mark the trial failed, but measurements and remaining targets continue. Warmup metrics are retained in `warmup-summary.json`; invalid response samples are logged in `warmup.log` or `k6.log` (up to nine per run). Execution/setup failures stop the run and retain logs.
+6. Writes raw summaries, per-scenario metrics, exit status, runtime details, image IDs, fixture hash, a source archive including untracked files, source changes, execution order, and logs under `results/`. Reports medians and min–max across trials.
+
+The reported highest passing rate must pass **every repeat**. It is a tested lower bound, not maximum capacity. Extend `RATES` if every offered rate passes. A value around 1,000 req/s at a 1,000 req/s offered rate cannot establish a winner.
+
+Worker recycling is disabled for Symfony Swoole/OpenSwoole and effectively disabled for Octane using a billion-request limit. Image IDs and serving PHP/Node versions are recorded because floating image tags can change. PHP heap and Node heap statistics have been removed from benchmark responses; they are not comparable memory measurements. Use container-level instrumentation for a separate memory study.
+
+## Manual endpoint testing
+
+Use the shared SQL files rather than the old framework seeders or Node `init-db.js` files (retained as application scaffolding). On a dedicated local target:
 
 ```bash
-cd octane_swoole
-
-# 1. Build the image, then install dependencies before starting
-docker compose build
-docker compose run --rm app composer install --ignore-platform-reqs
-
-# 2. Start services (production config and route caches are built at startup)
-docker compose up -d
-
-# 3. First-time setup
-docker compose exec app chmod -R 777 /app/storage /app/bootstrap/cache
-docker compose exec app php artisan key:generate
-docker compose exec app php artisan migrate
-docker compose exec app php artisan db:seed --class=BenchmarkSeeder
-curl http://localhost:8084/hello
-```
-
----
-
-### laravel-spawn — TrueAsync FrankenPHP
-
-laravel-spawn uses a custom PHP extension for coroutines and requires **PHP 8.6** (only available inside the Docker
-image — not a standard PHP release).
-The package [`yangusik/laravel-spawn`](https://github.com/YanGusik/laravel-spawn) is pulled from a VCS repository.
-Use `--ignore-platform-reqs` so Composer doesn't reject the PHP 8.6 requirement on your local machine.
-
-```bash
-cd laravel-spawn
-
-# 1. Install dependencies before starting
-#    (uses pre-built image — no build step needed)
-docker compose run --rm app composer install --ignore-platform-reqs
-
-# 2. Start the server (production config and route caches are built at startup)
-docker compose up -d
-
-# 3. First-time setup
-docker compose exec app chmod -R 777 /app/storage /app/bootstrap/cache
-docker compose exec app php artisan key:generate
-docker compose exec app php artisan migrate
-docker compose exec app php artisan db:seed --class=BenchmarkSeeder
-docker compose exec app php artisan vendor:publish --tag=async-config
-
-curl http://localhost:8083/hello
-```
-
-#### Updating the adapter
-
-When [`yangusik/laravel-spawn`](https://github.com/YanGusik/laravel-spawn) is updated, pull the latest version:
-
-```bash
-cd laravel-spawn
-docker compose run --rm app composer update yangusik/laravel-spawn --ignore-platform-reqs
-docker compose restart app
-```
-
-#### DB connection pool
-
-laravel-spawn uses a coroutine-aware PDO pool. The pool size is configured in `config/async.php`
-(publish with `php artisan vendor:publish --tag=async-config`):
-
-```php
-'db_pool' => [
-    'enabled' => true,
-    'min'     => 2,
-    'max'     => 10,   // per worker — 12 workers × 10 = 120 max connections total
-    'healthcheck_interval' => 30,
-],
-```
-
-PostgreSQL `max_connections` is set to **500** in `compose.yml` to accommodate the pool.
-Monitor live connections during load:
-
-```bash
-curl -s http://localhost:8083/debug/connections | jq .
-
-# Or watch during k6 run
-watch -n1 'curl -s http://localhost:8083/debug/connections | jq "{total,max_connections,by_state}"'
-```
-
----
-
-### symfony-spawn — TrueAsync FrankenPHP
-
-symfony-spawn uses the same TrueAsync FrankenPHP image but with a Symfony application.
-The package [`yangusik/symfony-spawn`](https://github.com/YanGusik/symfony-spawn) is available on Packagist.
-Use `--ignore-platform-reqs` so Composer doesn't reject the PHP 8.6 requirement on your local machine.
-
-```bash
-cd symfony-spawn
-
-# 1. Install dependencies before starting
-#    (uses pre-built image — no build step needed)
-docker compose run --rm app composer install --ignore-platform-reqs
-
-# 2. Start the server
-docker compose up -d
-
-# 3. First-time setup
-docker compose exec app php bin/console doctrine:migrations:migrate --no-interaction
-docker compose exec app php bin/console app:seed
-
-curl http://localhost:8085/hello
-```
-
-#### Updating the adapter
-
-When [`yangusik/symfony-spawn`](https://github.com/YanGusik/symfony-spawn) is updated, pull the latest version:
-
-```bash
-cd symfony-spawn
-docker compose run --rm app composer update yangusik/symfony-spawn --ignore-platform-reqs
-docker compose restart app
-```
-
----
-
-### nodejs-fastify / nodejs-express
-
-Both are built in the container (`npm install` at build time) and use a `pg` connection pool
-(min 2 / max 10 per worker, mirroring the TrueAsync pool) with a cluster of **16 workers**.
-
-```bash
-cd nodejs-fastify   # or nodejs-express
-
-# 1. Build and start
+cd nodejs-express  # or another target directory
+# Start only the database before creating the benchmark schema.
+docker compose up -d --wait db
+cat ../benchmark/schema.sql ../benchmark/reset.sql | \
+  docker compose exec -T db sh -c 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 docker compose up -d --build
-
-# 2. First-time setup (schema + seed)
-docker compose exec app node init-db.js
-
-curl http://localhost:8089/hello   # fastify
-curl http://localhost:8090/hello   # express
-```
-
-The worker count and ports are configurable via `WORKERS`, `PORT` and `DB_*` env vars in `compose.yml`.
-
----
-
-### nodejs-nestjs
-
-NestJS 11 (Express platform) — the "full-stack" Node.js counterpart to Laravel/Symfony:
-dependency injection, modules, controllers, guards, pipes, with a raw `pg` pool (min 2 / max 10).
-Each of the **16 cluster workers** boots the full DI container, mirroring the Octane worker model.
-
-```bash
-cd nodejs-nestjs
-
-# 1. Build and start (compiles TypeScript in the container)
-docker compose up -d --build
-
-# 2. First-time setup (schema + seed)
-docker compose exec app node init-db.js
-
-curl http://localhost:8091/hello
-```
-
----
-
-### nodejs-nextjs
-
-Next.js 16 (App Router, `output: 'standalone'`) — route handlers only (`/hello`, `/test`,
-`/bench`, `/debug/connections`), raw `pg` pool. Next.js runs a single-threaded server, so
-`entry.js` forks **16 standalone instances** (each on its own internal port) behind a tiny
-round-robin proxy — note this adds one proxy hop that the other adapters don't have.
-
-```bash
-cd nodejs-nextjs
-
-# 1. Build and start (multi-stage: next build inside the container)
-docker compose up -d --build
-
-# 2. First-time setup (schema + seed)
-docker compose exec app node init-db.js
-
-curl http://localhost:8092/hello
-```
-
----
-
-## Running benchmarks
-
-All scripts use the same load: **840 hello req/s + 360 DB req/s = 1200 req/s total**.
-
-```bash
-# PHP-FPM
-k6 run k6/fpm.js
-
-# Octane Swoole
-k6 run k6/octane_swoole.js
-
-k6 run k6/octane_frankenphp.js
-
-# laravel-spawn (TrueAsync FrankenPHP)
-k6 run k6/laravel_spawn.js
-
-# symfony-spawn (TrueAsync FrankenPHP)
-k6 run k6/symfony_spawn.js
-
-# nodejs (Fastify / Express, 16 workers)
-k6 run k6/nodejs_fastify.js
-k6 run k6/nodejs_express.js
-
-# nodejs (NestJS / Next.js)
-k6 run k6/nestjs.js
-k6 run k6/nextjs.js
-
-# /bench endpoint (5 DB queries per request), target adapter via BASE_URL
-BASE_URL=http://localhost:8083 k6 run k6/bench.js
-BASE_URL=http://localhost:8085 k6 run k6/bench.js
-BASE_URL=http://localhost:8084 k6 run k6/bench.js
-BASE_URL=http://localhost:8082 k6 run k6/bench.js
-BASE_URL=http://localhost:8086 k6 run k6/bench.js
-BASE_URL=http://localhost:8089 k6 run k6/bench.js
+cd ..
 BASE_URL=http://localhost:8090 k6 run k6/bench.js
-BASE_URL=http://localhost:8091 k6 run k6/bench.js
-BASE_URL=http://localhost:8092 k6 run k6/bench.js
+BASE_URL=http://localhost:8090 MODE=async k6 run k6/bench.js
 ```
 
----
+The compatibility scripts such as `k6/fpm.js` use the same mixed workload with target-specific URL defaults. Prefer the runner for published comparisons.
 
-## Results
+## Checks
 
-Load: **840 req/s `/hello` + 360 req/s `/test` = 1200 req/s total**, `constant-arrival-rate`, 30s duration.
-PHP-FPM and Octane Swoole: **12 workers**. laravel-spawn and symfony-spawn: **12 workers**.
-Environment: WSL2 (12 cores).
+```bash
+python3 -m unittest discover -s tests -v
+bash -n run_all_benches.sh bench.sh
+k6 inspect k6/bench.js
+```
 
-| Metric                | PHP-FPM (12w) | Octane Swoole (12w) | laravel-spawn (12w) | symfony-spawn (12w) |
-|-----------------------|---------------|---------------------|---------------------|---------------------|
-| Target rate           | 1200 req/s    | 1200 req/s          | 1200 req/s          | 1200 req/s          |
-| Actual throughput     | ~200 req/s    | ~752 req/s          | **~1186 req/s**     | **~1200 req/s**     |
-| Dropped iterations    | ~28 000       | ~5 000              | 405                 | **0**               |
-| avg latency           | ~4 000ms      | ~880ms              | ~20ms               | **~8ms**            |
-| p(95) latency         | ~5 000ms      | 2 320ms             | 34ms                | **11ms**            |
-| p(95) < 200ms         | ✗             | ✗                   | **✓**               | **✓**               |
-| Failed requests       | 0%            | 0%                  | **0%**              | **0%**              |
-| DB connections (peak) | —             | —                   | 120                 | 120                 |
-
----
-
-## Architecture comparison
-
-|               | PHP-FPM                      | Octane Swoole                   | laravel-spawn                                    | symfony-spawn                                    |
-|---------------|------------------------------|---------------------------------|--------------------------------------------------|--------------------------------------------------|
-| Framework     | Laravel                      | Laravel                         | Laravel                                          | Symfony                                          |
-| Request model | Process per request          | 1 process = 1 request at a time | 1 worker = N coroutines                          | 1 worker = N coroutines                          |
-| DB I/O        | Blocking (new conn each req) | Blocking (PDO synchronous)      | **Non-blocking (coroutine yield)**               | **Non-blocking (coroutine yield)**               |
-| Memory model  | Stateless                    | Long-lived process              | Long-lived process + coroutine context isolation | Long-lived process + coroutine context isolation |
-| App bootstrap | Every request                | Once per worker                 | Once per worker                                  | Once per worker                                  |
-
-**Why TrueAsync wins on DB-bound load:**
-Swoole keeps the app in memory (avoids bootstrap cost) but PDO is still synchronous —
-a worker blocked on `pg_sleep(0.01)` cannot accept another request.
-TrueAsync yields the coroutine on every DB call, so one worker handles hundreds of
-concurrent DB-bound requests without blocking.
-
----
-
-## Notes
-
-- Each adapter has its own PostgreSQL instance on a separate port to avoid interference
-- `APP_DEBUG=false` in all setups for fair comparison
-- Laravel benchmark endpoints use the stateless API middleware group; Laravel targets run with `APP_ENV=production` and cache config/routes at startup
-- OPcache enabled in PHP-FPM
-- Node.js targets run 16 cluster workers (12-core host) with a `pg` pool of max 10 per worker
-- NestJS uses the Express platform (same underlay as the express entry) with its full DI/module/controller stack — a like-for-like match for Laravel/Symfony's framework weight; all entries use raw SQL, no ORM
-- Next.js runs 16 standalone instances behind a round-robin proxy inside the container — one extra hop, and each instance is single-threaded
-- PostgreSQL `max_connections=500` in all setups
-- Absolute numbers will be higher on bare metal (benchmarks run on WSL2)
+`RESULTS.md` and `benchmark_results.md` contain historical results from earlier workloads/configurations. New runs are deliberately written elsewhere.
