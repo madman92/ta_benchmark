@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Connectors\ConnectionFactory;
 use function Async\await_all_or_fail;
 use function Async\spawn;
 
@@ -23,7 +24,7 @@ final class BenchmarkController extends Controller
 
     public function test()
     {
-        DB::select('SELECT pg_sleep(0.01);');
+        $this->withConnection(fn($connection) => $connection->select('SELECT pg_sleep(0.01);'));
 
         return response()->json(['ok' => true, 'time' => now()->toIso8601String()]);
     }
@@ -70,28 +71,33 @@ final class BenchmarkController extends Controller
 
     private function runBench(bool $parallel)
     {
+        return $this->withConnection(fn($connection) => $this->executeBench($parallel, $connection));
+    }
+
+    private function executeBench(bool $parallel, $connection)
+    {
         $userId = rand(1, 100);
         $otherUserId = ($userId % 100) + 1;
 
         // All reads precede writes in both modes. Only scheduling differs.
         [$user, $posts, $topPosts, $leaderboard, $otherUser, $otherPosts, $recentViews] = $this->runQueries([
-            fn() => DB::selectOne('SELECT id, name, email FROM users WHERE id = ?', [$userId]),
-            fn() => DB::select('SELECT id, title, views_count FROM posts WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 10', [$userId]),
-            fn() => DB::select('SELECT id, title, views_count FROM posts ORDER BY views_count DESC, id DESC LIMIT 5'),
-            fn() => DB::select('SELECT user_id, COUNT(*) as post_count FROM posts GROUP BY user_id ORDER BY post_count DESC, user_id ASC LIMIT 5'),
-            fn() => DB::selectOne('SELECT id, name, email FROM users WHERE id = ?', [$otherUserId]),
-            fn() => DB::select('SELECT id, title FROM posts WHERE user_id = ? ORDER BY id LIMIT 5', [$otherUserId]),
-            fn() => DB::select('SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC, id DESC LIMIT 10'),
-        ], $parallel);
+            fn($connection) => $connection->selectOne('SELECT id, name, email FROM users WHERE id = ?', [$userId]),
+            fn($connection) => $connection->select('SELECT id, title, views_count FROM posts WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 10', [$userId]),
+            fn($connection) => $connection->select('SELECT id, title, views_count FROM posts ORDER BY views_count DESC, id DESC LIMIT 5'),
+            fn($connection) => $connection->select('SELECT user_id, COUNT(*) as post_count FROM posts GROUP BY user_id ORDER BY post_count DESC, user_id ASC LIMIT 5'),
+            fn($connection) => $connection->selectOne('SELECT id, name, email FROM users WHERE id = ?', [$otherUserId]),
+            fn($connection) => $connection->select('SELECT id, title FROM posts WHERE user_id = ? ORDER BY id LIMIT 5', [$otherUserId]),
+            fn($connection) => $connection->select('SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC, id DESC LIMIT 10'),
+        ], $parallel, $connection);
 
         $postId = $posts[0]->id;
         $ip = '10.0.' . rand(0, 255) . '.' . rand(0, 255);
         $this->runQueries([
-            fn() => DB::update('UPDATE post_views SET ip_address = ?, viewed_at = NOW() WHERE id = ?', [$ip, $postId]),
-            fn() => DB::update('UPDATE posts SET views_count = views_count + 1 WHERE id = ?', [$postId]),
-        ], $parallel);
+            fn($connection) => $connection->update('UPDATE post_views SET ip_address = ?, viewed_at = NOW() WHERE id = ?', [$ip, $postId]),
+            fn($connection) => $connection->update('UPDATE posts SET views_count = views_count + 1 WHERE id = ?', [$postId]),
+        ], $parallel, $connection);
 
-        $stats = DB::selectOne('SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?', [$postId]);
+        $stats = $connection->selectOne('SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?', [$postId]);
 
         return response()->json([
             'user' => $user->name,
@@ -108,16 +114,38 @@ final class BenchmarkController extends Controller
         ]);
     }
 
-    private function runQueries(array $queries, bool $parallel): array
+    private function runQueries(array $queries, bool $parallel, $connection): array
     {
         if ($parallel) {
-            return await_all_or_fail(array_map(fn($query) => spawn($query), $queries));
+            $config = DB::connection()->getConfig();
+            $factory = app(ConnectionFactory::class);
+            return await_all_or_fail(array_map(fn($query) => spawn(function () use ($query, $config, $factory) {
+                // Concurrent statements need distinct PDO wrappers. The native
+                // pool still bounds and reuses their physical connections.
+                $connection = $factory->make($config);
+                try {
+                    return $query($connection);
+                } finally {
+                    $connection->disconnect();
+                }
+            }), $queries));
         }
         $results = [];
         foreach ($queries as $query) {
-            $results[] = $query();
+            $results[] = $query($connection);
         }
         return $results;
+    }
+
+    private function withConnection(callable $query)
+    {
+        // Each request owns its PDO wrapper; physical links remain pooled.
+        $connection = app(ConnectionFactory::class)->make(DB::connection()->getConfig());
+        try {
+            return $query($connection);
+        } finally {
+            $connection->disconnect();
+        }
     }
 
     public function opcacheStatus()

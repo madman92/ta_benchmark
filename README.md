@@ -114,3 +114,7 @@ k6 inspect k6/bench.js
 ```
 
 `RESULTS.md` and `benchmark_results.md` contain historical results from earlier workloads/configurations. New runs are deliberately written elsewhere.
+
+Updated package versions are recorded in [benchmark/DEPENDENCIES.md](benchmark/DEPENDENCIES.md).
+
+Laravel Spawn uses a distinct Laravel/PDO connection wrapper per request and per concurrent child operation, while TrueAsync’s native pool limits and reuses physical connections. This prevents overlapping commands on a shared PDO wrapper with TrueAsync 0.10.0.
