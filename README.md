@@ -122,4 +122,4 @@ k6 inspect k6/bench.js
 
 Updated package versions are recorded in [benchmark/DEPENDENCIES.md](benchmark/DEPENDENCIES.md).
 
-Laravel Spawn uses a distinct Laravel/PDO connection wrapper per request and per concurrent child operation, while TrueAsync’s native pool limits and reuses physical connections. This prevents overlapping commands on a shared PDO wrapper with TrueAsync 0.10.0.
+Laravel Spawn creates one shared PDO template per worker with TrueAsync's native pool enabled (`PDO::ATTR_POOL_ENABLED`, maximum ten connections). The Laravel connection wrapper uses that same PDO for reads and writes, including concurrent child operations. Physical connection checkout and return are handled by TrueAsync; no application-level pool is used. The template is created before HTTP handling with `POOL_MIN=0`, so connections open lazily after FrankenPHP starts its scheduler. See the [TrueAsync PDO Pool documentation](https://true-async.github.io/en/docs/components/pdo-pool.html#binding-connections-to-coroutines).

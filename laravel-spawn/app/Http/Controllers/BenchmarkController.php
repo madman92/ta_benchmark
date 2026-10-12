@@ -2,13 +2,19 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Support\Facades\DB;
-use Illuminate\Database\Connectors\ConnectionFactory;
+use Illuminate\Database\Connection;
 use function Async\await_all_or_fail;
 use function Async\spawn;
 
 final class BenchmarkController extends Controller
 {
+    private Connection $connection;
+
+    public function __construct()
+    {
+        $this->connection = app('benchmark.connection');
+    }
+
     public function home()
     {
         return view('welcome');
@@ -24,14 +30,14 @@ final class BenchmarkController extends Controller
 
     public function test()
     {
-        $this->withConnection(fn($connection) => $connection->select('SELECT pg_sleep(0.01);'));
+        $this->connection->select('SELECT pg_sleep(0.01);');
 
         return response()->json(['ok' => true, 'time' => now()->toIso8601String()]);
     }
 
     public function connections()
     {
-        $byState = DB::select("
+        $byState = $this->connection->select("
             SELECT state, count(*) as cnt
             FROM pg_stat_activity
             WHERE datname = current_database()
@@ -39,7 +45,7 @@ final class BenchmarkController extends Controller
             ORDER BY cnt DESC
         ");
 
-        $byClient = DB::select("
+        $byClient = $this->connection->select("
             SELECT client_addr, state, count(*) as cnt
             FROM pg_stat_activity
             WHERE datname = current_database()
@@ -48,7 +54,7 @@ final class BenchmarkController extends Controller
             LIMIT 20
         ");
 
-        $limit = DB::selectOne("SELECT current_setting('max_connections')::int AS max_connections");
+        $limit = $this->connection->selectOne("SELECT current_setting('max_connections')::int AS max_connections");
 
         return response()->json([
             'max_connections' => $limit->max_connections,
@@ -71,7 +77,7 @@ final class BenchmarkController extends Controller
 
     private function runBench(bool $parallel)
     {
-        return $this->withConnection(fn($connection) => $this->executeBench($parallel, $connection));
+        return $this->executeBench($parallel, $this->connection);
     }
 
     private function executeBench(bool $parallel, $connection)
@@ -117,35 +123,13 @@ final class BenchmarkController extends Controller
     private function runQueries(array $queries, bool $parallel, $connection): array
     {
         if ($parallel) {
-            $config = DB::connection()->getConfig();
-            $factory = app(ConnectionFactory::class);
-            return await_all_or_fail(array_map(fn($query) => spawn(function () use ($query, $config, $factory) {
-                // Concurrent statements need distinct PDO wrappers. The native
-                // pool still bounds and reuses their physical connections.
-                $connection = $factory->make($config);
-                try {
-                    return $query($connection);
-                } finally {
-                    $connection->disconnect();
-                }
-            }), $queries));
+            return await_all_or_fail(array_map(fn($query) => spawn(fn() => $query($connection)), $queries));
         }
         $results = [];
         foreach ($queries as $query) {
             $results[] = $query($connection);
         }
         return $results;
-    }
-
-    private function withConnection(callable $query)
-    {
-        // Each request owns its PDO wrapper; physical links remain pooled.
-        $connection = app(ConnectionFactory::class)->make(DB::connection()->getConfig());
-        try {
-            return $query($connection);
-        } finally {
-            $connection->disconnect();
-        }
     }
 
     public function opcacheStatus()
