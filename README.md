@@ -29,9 +29,10 @@ Laravel TrueAsync uses an explicit FrankenPHP configuration with ten request que
 | symfony-swoole | 8087 | PHP 8.5 Swoole | No |
 | symfony-swoole-coroutine | 8088 | PHP 8.5 OpenSwoole, silpo-tech bundle | Yes |
 | symfony-openswoole-bundle | 8093 | PHP 8.5 OpenSwoole, symfony-swoole bundle | Yes |
-| nodejs-express | 8090 | Node 24 | Yes |
 | nodejs-nestjs | 8091 | Node 24 | Yes |
 | nodejs-nextjs | 8092 | Node 24, 16 instances behind a local proxy | Yes |
+
+Express is excluded from the default suite because its results in the observed run were similar to NestJS: both achieved about 3,000 req/s for mixed traffic and 2,000 req/s for sequential and async workloads. NestJS represents this comparison in the default suite. Express remains available explicitly with `./run_all_benches.sh nodejs-express` on port 8090.
 
 PHP images intentionally retain their supported version families. TrueAsync PHP 8.6 versus PHP 8.5, framework differences, connection lifecycle, and Next.js's proxy mean these are **deployment comparisons**, not isolated measurements of adapter overhead. Do not claim that all runtime costs are equal.
 
@@ -43,14 +44,14 @@ Requirements: Docker with Compose v2, k6, Python 3.10+. Ports listed above and t
 ./run_all_benches.sh
 
 # Select targets
-./run_all_benches.sh fpm laravel-spawn nodejs-express
+./run_all_benches.sh fpm laravel-spawn nodejs-nestjs
 
 # Quick correctness/build smoke test; not suitable for performance claims
 REPEATS=1 RATES=20 DURATION=3s WARMUP_DURATION=2s WARMUP_VUS=32 VUS=100 \
-  ./run_all_benches.sh fpm nodejs-express
+  ./run_all_benches.sh fpm nodejs-nestjs
 ```
 
-The default is a single-repeat comparison: 29 measurements across all 11 targets, about **16 minutes 55 seconds** of warmup and measurement plus build, startup and drain time. It does not establish repeat-based confidence. Use existing environment variables for longer runs; there are no profiles.
+The default is a single-repeat comparison: 26 measurements across 10 targets, about **15 minutes 10 seconds** of warmup and measurement plus build, startup and drain time. It does not establish repeat-based confidence. Use existing environment variables for longer runs; there are no profiles.
 
 To investigate mixed capacity, use `MIXED_RATES="3000 4000 6000" ./run_all_benches.sh`; this adds mixed measurements while keeping database benchmark rates unchanged.
 
@@ -93,15 +94,15 @@ Worker recycling is disabled for Symfony Swoole/OpenSwoole and effectively disab
 Use the shared SQL files rather than the old framework seeders or Node `init-db.js` files (retained as application scaffolding). On a dedicated local target:
 
 ```bash
-cd nodejs-express  # or another target directory
+cd nodejs-nestjs  # or another target directory
 # Start only the database before creating the benchmark schema.
 docker compose up -d --wait db
 cat ../benchmark/schema.sql ../benchmark/reset.sql | \
   docker compose exec -T db sh -c 'export PGPASSWORD="$POSTGRES_PASSWORD"; exec psql -h 127.0.0.1 -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 docker compose up -d --build
 cd ..
-BASE_URL=http://localhost:8090 k6 run k6/bench.js
-BASE_URL=http://localhost:8090 MODE=async k6 run k6/bench.js
+BASE_URL=http://localhost:8091 k6 run k6/bench.js
+BASE_URL=http://localhost:8091 MODE=async k6 run k6/bench.js
 ```
 
 The compatibility scripts such as `k6/fpm.js` use the same mixed workload with target-specific URL defaults. Prefer the runner for published comparisons.

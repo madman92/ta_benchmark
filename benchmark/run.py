@@ -287,7 +287,7 @@ class Trial:
 
 
 def main():
-    targets = sys.argv[1:] or list(TARGETS)
+    targets = sys.argv[1:] or [target for target in TARGETS if target != 'nodejs-express']
     if len(set(targets)) != len(targets) or any(t not in TARGETS for t in targets):
         raise ValueError(f'Choose unique targets from: {", ".join(TARGETS)}')
     repeats = int(os.getenv('REPEATS', '1'))
