@@ -2,7 +2,7 @@
 
 namespace App\Controller;
 
-use App\Service\DoctrinePool;
+use App\Service\DbPool;
 use Doctrine\DBAL\Connection;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\Routing\Attribute\Route;
@@ -11,7 +11,7 @@ use function OpenSwoole\Core\Coroutine\batch;
 class BenchController
 {
     public function __construct(
-        private readonly DoctrinePool $doctrinePool,
+        private readonly DbPool $dbPool,
         private readonly Connection $connection
     ) {
     }
@@ -53,25 +53,27 @@ class BenchController
         $userId = rand(1, 100);
         $otherUserId = ($userId % 100) + 1;
 
-        // All reads precede writes in both modes. Only scheduling differs.
+        // SQL and read/write phases match; sequential uses Doctrine/PDO,
+        // while async uses the native coroutine client and cached statements.
+        $db = $parallel ? $this->dbPool : $this->connection;
         [$user, $posts, $topPosts, $leaderboard, $otherUser, $otherPosts, $recentViews] = $this->runQueries([
-            fn() => $this->doctrinePool->fetchAssociative('SELECT id, name, email FROM users WHERE id = ?', [$userId]),
-            fn() => $this->doctrinePool->fetchAllAssociative('SELECT id, title, views_count FROM posts WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 10', [$userId]),
-            fn() => $this->doctrinePool->fetchAllAssociative('SELECT id, title, views_count FROM posts ORDER BY views_count DESC, id DESC LIMIT 5'),
-            fn() => $this->doctrinePool->fetchAllAssociative('SELECT user_id, COUNT(*) as post_count FROM posts GROUP BY user_id ORDER BY post_count DESC, user_id ASC LIMIT 5'),
-            fn() => $this->doctrinePool->fetchAssociative('SELECT id, name, email FROM users WHERE id = ?', [$otherUserId]),
-            fn() => $this->doctrinePool->fetchAllAssociative('SELECT id, title FROM posts WHERE user_id = ? ORDER BY id LIMIT 5', [$otherUserId]),
-            fn() => $this->doctrinePool->fetchAllAssociative('SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC, id DESC LIMIT 10'),
+            fn() => $db->fetchAssociative('SELECT id, name, email FROM users WHERE id = ?', [$userId]),
+            fn() => $db->fetchAllAssociative('SELECT id, title, views_count FROM posts WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 10', [$userId]),
+            fn() => $db->fetchAllAssociative('SELECT id, title, views_count FROM posts ORDER BY views_count DESC, id DESC LIMIT 5'),
+            fn() => $db->fetchAllAssociative('SELECT user_id, COUNT(*) as post_count FROM posts GROUP BY user_id ORDER BY post_count DESC, user_id ASC LIMIT 5'),
+            fn() => $db->fetchAssociative('SELECT id, name, email FROM users WHERE id = ?', [$otherUserId]),
+            fn() => $db->fetchAllAssociative('SELECT id, title FROM posts WHERE user_id = ? ORDER BY id LIMIT 5', [$otherUserId]),
+            fn() => $db->fetchAllAssociative('SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC, id DESC LIMIT 10'),
         ], $parallel);
 
         $postId = $posts[0]['id'];
         $ip = '10.0.' . rand(0, 255) . '.' . rand(0, 255);
         $this->runQueries([
-            fn() => $this->doctrinePool->executeStatement('UPDATE post_views SET ip_address = ?, viewed_at = NOW() WHERE id = ?', [$ip, $postId]),
-            fn() => $this->doctrinePool->executeStatement('UPDATE posts SET views_count = views_count + 1 WHERE id = ?', [$postId]),
+            fn() => $db->executeStatement('UPDATE post_views SET ip_address = ?, viewed_at = NOW() WHERE id = ?', [$ip, $postId]),
+            fn() => $db->executeStatement('UPDATE posts SET views_count = views_count + 1 WHERE id = ?', [$postId]),
         ], $parallel);
 
-        $stats = $this->doctrinePool->fetchAssociative('SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?', [$postId]);
+        $stats = $db->fetchAssociative('SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?', [$postId]);
 
         return new JsonResponse([
             'user' => $user['name'],

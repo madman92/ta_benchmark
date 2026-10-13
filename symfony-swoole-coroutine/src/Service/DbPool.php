@@ -8,12 +8,15 @@ use OpenSwoole\Core\Coroutine\Pool\ClientPool;
 use OpenSwoole\Coroutine\PostgreSQL;
 use OpenSwoole\Coroutine\PostgreSQLStatement;
 
-class DoctrinePool
+class DbPool
 {
     private ClientPool $pool;
+    /** @var \WeakMap<PostgreSQL, array<string, PostgreSQLStatement>> */
+    private \WeakMap $statements;
 
     public function __construct(int $maxSize = 10)
     {
+        $this->statements = new \WeakMap();
         $config = (new PostgresConfig())
             ->withHost(getenv('DB_HOST'))
             ->withPort((int) getenv('DB_PORT'))
@@ -84,12 +87,22 @@ class DoctrinePool
             return $stmt;
         }
 
-        $stmt = $pg->prepare(self::withNamedParams($sql));
-
-        if ($stmt === false) {
-            throw new \RuntimeException('PostgreSQL statement preparation failed');
+        // The pool lends each client exclusively until rows have been fetched.
+        // Named statements belong to that physical connection, so cache them
+        // per client, never globally by SQL alone.
+        $prepared = $this->statements[$pg] ?? [];
+        $stmt = $prepared[$sql] ?? null;
+        if ($stmt === null) {
+            $stmt = $pg->prepare(self::withNamedParams($sql));
+            if ($stmt === false) {
+                throw new \RuntimeException('PostgreSQL statement preparation failed');
+            }
+            $prepared[$sql] = $stmt;
+            $this->statements[$pg] = $prepared;
         }
         if (!$stmt->execute($params)) {
+            unset($prepared[$sql]);
+            $this->statements[$pg] = $prepared;
             throw new \RuntimeException('PostgreSQL statement execution failed');
         }
 
@@ -103,15 +116,5 @@ class DoctrinePool
         return preg_replace_callback('/\?/', function () use (&$i) {
             return '$' . ++$i;
         }, $sql);
-    }
-
-    public function fill(): void
-    {
-        $this->pool->fill();
-    }
-
-    public function close(): void
-    {
-        $this->pool->close();
     }
 }

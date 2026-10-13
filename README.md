@@ -114,11 +114,23 @@ bash -n run_all_benches.sh bench.sh
 k6 inspect k6/bench.js
 ```
 
+With an OpenSwoole app and its database already started, check native statement reuse, changing bound parameters, parallel execution and recovery after a query error:
+
+```bash
+docker compose -f symfony-openswoole-bundle/compose.yml run --rm --no-deps \
+  --entrypoint php -v "$PWD/tests/check_openswoole_dbpool.php:/tmp/check-dbpool.php:ro" \
+  app /tmp/check-dbpool.php
+```
+
+The same check works with `symfony-swoole-coroutine/compose.yml`.
+
 `RESULTS.md` and `benchmark_results.md` contain historical results from earlier workloads/configurations. New runs are deliberately written elsewhere.
 
 ## Swoole comparison
 
 `./run_all_benches.sh octane_swoole symfony-swoole symfony-swoole-coroutine symfony-openswoole-bundle` compares the four Swoole deployments with the same fixture, offered rates and resource budgets. The new target uses [symfony-swoole/swoole-bundle](https://github.com/symfony-swoole/swoole-bundle) 0.35.3 with OpenSwoole 26.2, coroutine service isolation and a ten-connection native PostgreSQL pool per worker. It retains the same sequential and async SQL workloads. Its `/test` uses a coroutine-isolated Doctrine connection, provided by resetter-bundle 2.1.1. This is a comparison of complete deployments and integrations, not just the server extension.
+
+Both Symfony OpenSwoole adapters use Doctrine DBAL/PDO for sequential `/bench`, matching `symfony-swoole` and its default `ATTR_DISABLE_PREPARES` behavior. Async `/bench-async` uses `DbPool` with the native coroutine PostgreSQL client and a maximum of ten connections per worker. Parameterized statements are prepared once per SQL per physical client and reused with new bound parameters; this remains named prepared execution, rather than PDO's unnamed parameterized execution. All ten SQL operations and their read/write phases remain the same. Sequential/async comparisons therefore include a driver difference as well as scheduling. PDO PostgreSQL blocks the worker in the current OpenSwoole image.
 
 Updated package versions are recorded in [benchmark/DEPENDENCIES.md](benchmark/DEPENDENCIES.md).
 
