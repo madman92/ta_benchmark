@@ -77,7 +77,7 @@ For FPM, the application budget includes nginx (0.5 CPU and 256 MiB); PHP receiv
 
 ## What the runner verifies and retains
 
-1. Starts a dedicated database, creates the common schema/fixture, builds and starts the app.
+1. Starts a dedicated database, waits for TCP readiness, creates the common schema/fixture, builds and starts the app. TCP healthchecks exclude PostgreSQL’s temporary socket-only initialization server, which shuts down before the final server starts.
 2. Checks DB readiness and retrieves `/debug/runtime` from the serving process. PHP must have OPcache enabled, 128 MiB, timestamp checks disabled, and JIT disabled. A mismatch stops the run.
 3. Calls each supported benchmark mode in isolation, validates its response, and queries PostgreSQL to prove exactly one counter increment and the expected view update, with unchanged row counts. Passing load runs also verify the total counter increments against the completed request count.
 4. Stops serving processes and resets the fixture before each workload, then starts them again to prevent abandoned requests from writing into the next trial. Performs concurrent warmup before every measurement, drains requests, then resets and analyzes the common fixture. Resetting also removes accumulated table/index bloat between measurements.
@@ -97,7 +97,7 @@ cd nodejs-express  # or another target directory
 # Start only the database before creating the benchmark schema.
 docker compose up -d --wait db
 cat ../benchmark/schema.sql ../benchmark/reset.sql | \
-  docker compose exec -T db sh -c 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+  docker compose exec -T db sh -c 'export PGPASSWORD="$POSTGRES_PASSWORD"; exec psql -h 127.0.0.1 -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 docker compose up -d --build
 cd ..
 BASE_URL=http://localhost:8090 k6 run k6/bench.js

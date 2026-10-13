@@ -29,7 +29,7 @@ services:
     ports:
       - "5443:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U express"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U express -d express"]
       interval: 3s
       timeout: 3s
       retries: 10

@@ -151,8 +151,11 @@ class Trial:
 
     def sql(self, sql):
         try:
+            # TCP excludes the socket-only server used during image initialization.
             return self.compose('exec', '-T', 'db', 'sh', '-c',
-                                'exec psql -X -v ON_ERROR_STOP=1 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
+                                'export PGPASSWORD="$POSTGRES_PASSWORD"; '
+                                'exec psql -h 127.0.0.1 -X -v ON_ERROR_STOP=1 -At '
+                                '-U "$POSTGRES_USER" -d "$POSTGRES_DB"',
                                 input=sql, capture_output=True).stdout.strip()
         except subprocess.CalledProcessError as error:
             with (self.directory / 'sql-errors.log').open('a') as log:
