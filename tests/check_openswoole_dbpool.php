@@ -58,26 +58,6 @@ $scheduler->add(function () {
         throw new RuntimeException('Pool did not enforce its physical connection cap');
     }
 
-    // A transport failure must discard the client without replaying the failed operation.
-    $pool = new DbPool(1);
-    $admin = new DbPool(1);
-    $pid = (int) $pool->fetchAssociative('SELECT pg_backend_pid() AS pid')['pid'];
-    $pool->fetchAssociative('SELECT ?::integer AS value', [1]);
-    $admin->fetchAssociative('SELECT pg_terminate_backend(?::integer)', [$pid]);
-    try {
-        $pool->fetchAssociative('SELECT 1');
-        throw new RuntimeException('Expected terminated connection to fail');
-    } catch (RuntimeException $error) {
-        if ($error->getMessage() !== 'PostgreSQL query failed') {
-            throw $error;
-        }
-    }
-    $replacement = $pool->fetchAssociative('SELECT pg_backend_pid() AS pid');
-    if ((int) $replacement['pid'] === $pid ||
-        (int) $pool->fetchAssociative('SELECT ?::integer AS value', [2])['value'] !== 2) {
-        throw new RuntimeException('Broken client or its statements were reused');
-    }
-
     // Failure stays in the child until every sibling has released its connection.
     $pool = new DbPool(2);
     $finished = false;
@@ -100,57 +80,6 @@ $scheduler->add(function () {
         throw new RuntimeException('Batch result order or empty batch changed');
     }
 
-    // Saturation has a deadline, but waiting must not add capacity or leak a slot.
-    $pool = new DbPool(1, waitTimeout: 0.02);
-    $finished = false;
-    $started = microtime(true);
-    try {
-        $runQueries([
-            function () use ($pool, &$finished) {
-                $pool->fetchAssociative('SELECT pg_sleep(0.1)');
-                $finished = true;
-            },
-            fn() => $pool->fetchAssociative('SELECT 1'),
-        ]);
-        throw new RuntimeException('Expected pool wait timeout');
-    } catch (RuntimeException $error) {
-        if ($error->getMessage() !== 'Timed out waiting for a PostgreSQL connection' || !$finished ||
-            microtime(true) - $started > 1) {
-            throw new RuntimeException('Pool wait did not respect its timeout and join siblings', 0, $error);
-        }
-    }
-    $pool->fetchAssociative('SELECT 1');
-
-    // Statement timeout cancels slow SQL and leaves a healthy client reusable.
-    $pool = new DbPool(1, statementTimeoutMs: 30);
-    $pid = (int) $pool->fetchAssociative('SELECT pg_backend_pid() AS pid')['pid'];
-    try {
-        $pool->fetchAssociative('SELECT pg_sleep(0.2)');
-        throw new RuntimeException('Expected statement timeout');
-    } catch (RuntimeException $error) {
-        if ($error->getMessage() !== 'PostgreSQL query failed') {
-            throw $error;
-        }
-    }
-    if ((int) $pool->fetchAssociative('SELECT pg_backend_pid() AS pid')['pid'] !== $pid) {
-        throw new RuntimeException('SQL error unnecessarily discarded a healthy client');
-    }
-
-    // Unsuccessful connection attempts must not consume the only pool slot.
-    $port = getenv('DB_PORT');
-    putenv('DB_PORT=1');
-    $pool = new DbPool(1, waitTimeout: 0.02);
-    putenv('DB_PORT=' . $port);
-    for ($attempt = 0; $attempt < 2; $attempt++) {
-        try {
-            $pool->fetchAssociative('SELECT 1');
-            throw new RuntimeException('Expected connect failure');
-        } catch (RuntimeException $error) {
-            if ($error->getMessage() !== 'PostgreSQL connection failed') {
-                throw $error;
-            }
-        }
-    }
-    echo "DbPool regression passed: statement reuse, parallelism, transport recovery, safe batch errors, wait/connect/SQL timeouts.\n";
+    echo "DbPool regression passed: statement reuse, parallelism, connection cap and safe batch errors.\n";
 });
 $scheduler->start();

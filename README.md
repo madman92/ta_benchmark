@@ -117,7 +117,7 @@ bash -n run_all_benches.sh bench.sh
 k6 inspect k6/bench.js
 ```
 
-With an OpenSwoole app and its database already started, check native statement reuse, parallel execution, connection caps, recovery after transport failure, checkout/SQL timeouts, and child-error propagation:
+With an OpenSwoole app and its database already started, check native statement reuse, parallel execution, connection caps, recovery after a query error, and child-error propagation:
 
 ```bash
 docker compose -f symfony-openswoole-bundle/compose.yml run --rm --no-deps \
@@ -135,7 +135,7 @@ The same check works with `symfony-swoole-coroutine/compose.yml`.
 
 Both Symfony OpenSwoole adapters use Doctrine DBAL/PDO for sequential `/bench`, matching `symfony-swoole` and its default `ATTR_DISABLE_PREPARES` behavior. Async `/bench-async` uses `DbPool` with the native coroutine PostgreSQL client and a maximum of ten connections per worker. Parameterized statements are prepared once per SQL per physical client and reused with new bound parameters; this remains named prepared execution, rather than PDO's unnamed parameterized execution. All ten SQL operations and their read/write phases remain the same. Sequential/async comparisons therefore include a driver difference as well as scheduling. PDO PostgreSQL blocks the worker in the current OpenSwoole image.
 
-The native `DbPool` opens connections lazily, reuses idle clients, and bounds checked-out clients plus connection attempts with coroutine-channel tokens. Pool checkout waits at most one second; native connection establishment uses a two-second timeout; each new native connection sets PostgreSQL `statement_timeout` to 5000 ms. The first and third limits are configurable as `$waitTimeout` and `$statementTimeoutMs` in each adapter's `config/services.yaml`. These are per-operation limits, not an overall HTTP deadline; they do not change the Doctrine/PDO path. Broken clients and their cached statements are discarded, and later calls open replacements. Failed operations are never automatically replayed, because a disconnected write may already have committed. The existing controller `runQueries()` wraps tasks with error capture and uses the standard OpenSwoole `batch()`. After all tasks finish, it rethrows any captured error in the request coroutine so Symfony can handle the failure without terminating the worker.
+The native `DbPool` uses OpenSwoole Core's `ClientPool` with a maximum of ten clients per worker and retains its default connection/checkout behavior. The controller's existing `runQueries()` wraps tasks with error capture and uses the standard OpenSwoole `batch()`. After all tasks finish, it rethrows any captured error in the request coroutine so Symfony can handle the failure without terminating the worker.
 
 Updated package versions are recorded in [benchmark/DEPENDENCIES.md](benchmark/DEPENDENCIES.md).
 

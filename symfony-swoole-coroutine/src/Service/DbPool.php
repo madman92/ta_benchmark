@@ -2,29 +2,20 @@
 
 namespace App\Service;
 
+use OpenSwoole\Core\Coroutine\Client\PostgresClientFactory;
 use OpenSwoole\Core\Coroutine\Client\PostgresConfig;
-use OpenSwoole\Coroutine\Channel;
+use OpenSwoole\Core\Coroutine\Pool\ClientPool;
 use OpenSwoole\Coroutine\PostgreSQL;
 use OpenSwoole\Coroutine\PostgreSQLStatement;
 
 class DbPool
 {
-    /** Tokens bound both checked-out clients and connection attempts. */
-    private Channel $pool;
-    private string $connectionString;
-    /** @var list<PostgreSQL> */
-    private array $idle = [];
+    private ClientPool $pool;
     /** @var \WeakMap<PostgreSQL, array<string, PostgreSQLStatement>> */
     private \WeakMap $statements;
 
-    public function __construct(
-        int $maxSize = 10,
-        private readonly float $waitTimeout = 1.0,
-        private readonly int $statementTimeoutMs = 5000,
-    ) {
-        if ($maxSize < 1 || $waitTimeout <= 0 || $statementTimeoutMs < 1) {
-            throw new \InvalidArgumentException('Pool size and timeouts must be positive');
-        }
+    public function __construct(int $maxSize = 10)
+    {
         $this->statements = new \WeakMap();
         $config = (new PostgresConfig())
             ->withHost(getenv('DB_HOST'))
@@ -33,11 +24,7 @@ class DbPool
             ->withUsername(getenv('DB_USER'))
             ->withPassword(getenv('DB_PASSWORD'));
 
-        $this->connectionString = $config->getConnectionString();
-        $this->pool = new Channel($maxSize);
-        for ($i = 0; $i < $maxSize; $i++) {
-            $this->pool->push(true);
-        }
+        $this->pool = new ClientPool(PostgresClientFactory::class, $config, $maxSize);
     }
 
     public function fetchAssociative(string $sql, array $params = []): array|false
@@ -57,43 +44,12 @@ class DbPool
 
     private function withConn(callable $task): mixed
     {
-        $slot = $this->pool->pop($this->waitTimeout);
-        if ($slot === false) {
-            throw new \RuntimeException('Timed out waiting for a PostgreSQL connection');
-        }
+        $pg = $this->pool->get();
 
-        $pg = array_pop($this->idle);
         try {
-            if ($pg === null) {
-                $pg = new PostgreSQL();
-                if (!$pg->connect($this->connectionString, 2.0)) {
-                    $pg = null;
-                    throw new \RuntimeException('PostgreSQL connection failed');
-                }
-                if ($pg->query('SET statement_timeout = ' . $this->statementTimeoutMs) === false) {
-                    $pg = null;
-                    throw new \RuntimeException('PostgreSQL connection setup failed');
-                }
-            }
             return $task($pg);
-        } catch (\Throwable $error) {
-            // SQL errors can leave a healthy connection. Transport failures cannot.
-            // Never replay a failed write: the server may already have committed it.
-            if ($pg !== null && ($pg->status() !== \OPENSWOOLE_PG_CONNECTION_OK ||
-                in_array($pg->error, [
-                    \OpenSwoole\Util::getErrorMessage(\SWOOLE_ERROR_CO_TIMEDOUT),
-                    \OpenSwoole\Util::getErrorMessage(\SWOOLE_ERROR_CO_CANCELED),
-                ], true))) {
-                unset($this->statements[$pg]);
-                $pg = null;
-            }
-            throw $error;
         } finally {
-            // A failed connection attempt also returns its capacity for a later retry.
-            if ($pg !== null) {
-                $this->idle[] = $pg;
-            }
-            $this->pool->push(true);
+            $this->pool->put($pg);
         }
     }
 
