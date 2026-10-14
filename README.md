@@ -15,7 +15,7 @@ The seven reads fetch a user, ten posts, top posts, a leaderboard, another user,
 
 ## Targets
 
-All targets configure **16 application workers**. This is not equal DB concurrency: blocking deployments generally have one active query per worker, while pooled async targets can use up to ten connections per worker. This architectural difference remains part of the deployment comparison.
+All targets configure **16 application workers**. This is not equal DB concurrency: blocking deployments generally have one active query per worker, while pooled async targets can use up to ten connections per worker (160 total, plus separate Doctrine connections where applicable). This architectural difference remains part of the deployment comparison.
 
 Laravel TrueAsync uses an explicit FrankenPHP configuration with ten request queue slots per worker. The default single-slot queues rejected bursts during concurrent warmup, producing empty responses in the pinned runtime. Worker count and endpoint workloads are unchanged.
 
@@ -69,12 +69,14 @@ Defaults:
 | `REQUEST_TIMEOUT` | `10s` | Request timeout and measurement drain period |
 | `ORDER_SEED` | `42` | Reproducible shuffle of target and workload/rate order |
 | `APP_CPUS` / `APP_MEMORY_MB` | `4` / `2048` | Total application CPU quota and memory budget |
-| `DB_CPUS` / `DB_MEMORY` | `2` / `2048m` | PostgreSQL CPU quota and memory budget |
+| `DB_CPUS` / `DB_MEMORY` | `4` / `2048m` | PostgreSQL CPU quota and memory budget |
 | `RESULTS_DIR` | New directory under `results/` | Must not already exist |
 
 The mixed workload defaults to 2,100 `/hello` + 900 `/test` requests/s in separate scenarios. `MIXED_RATES` scales the same 70% / 30% split (rounding hello down for nonmultiples of ten). Its default aggregate P95 limit is 200 ms; `/bench` is 500 ms. `P95_MS` overrides the aggregate limit; mixed per-endpoint P95 limits remain 200 ms. Passing requires all body/status checks, HTTP error rate below 1%, and zero dropped iterations. All VUs are preallocated to avoid allocation bursts during measurement.
 
 For FPM, the application budget includes nginx (0.5 CPU and 256 MiB); PHP receives the remainder. Other adapters include their server/proxy within their app container. PostgreSQL uses the same `postgres:17-alpine` image family and `max_connections=500` everywhere. CPU quotas are not CPU affinity: k6 and the database still share the host. Monitor the load generator and use a quiet host with sufficient memory before interpreting saturation.
+
+The current defaults use sixteen workers and a four-CPU PostgreSQL budget. Historical results with sixteen workers and a two-CPU database describe a different deployment configuration and must be rerun for comparisons with these defaults.
 
 ## What the runner verifies and retains
 

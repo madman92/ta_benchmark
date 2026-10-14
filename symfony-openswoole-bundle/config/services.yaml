@@ -10,5 +10,5 @@ services:
 
     App\Service\DbPool:
         arguments:
-            # 16 workers x 10 connections leaves room for DBAL and administration.
+            # 16 workers x 10 native connections, plus DBAL and administration.
             $maxSize: 10

@@ -135,7 +135,7 @@ class Trial:
         if cpus <= 0.5 or memory <= 256:
             raise ValueError('APP_CPUS must exceed 0.5 and APP_MEMORY_MB must exceed 256')
         services = {self.service: {'cpus': cpus, 'mem_limit': f'{memory}m'},
-                    'db': {'cpus': float(os.getenv('DB_CPUS', '2')),
+                    'db': {'cpus': float(os.getenv('DB_CPUS', '4')),
                            'mem_limit': os.getenv('DB_MEMORY', '2048m')}}
         if target == 'fpm':
             # The proxy is included within the same total application budget.
