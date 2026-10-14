@@ -2,6 +2,9 @@
 """Isolated, reproducible deployment benchmarks. Standard library only."""
 import hashlib
 import json
+import math
+import re
+import threading
 import os
 from pathlib import Path
 import platform
@@ -21,10 +24,10 @@ TARGETS = {
     'octane_swoole': 8084, 'symfony-spawn': 8085, 'symfony-swoole': 8087,
     'symfony-swoole-coroutine': 8088,
     'nodejs-express': 8090, 'nodejs-nestjs': 8091, 'nodejs-nextjs': 8092,
-    'symfony-openswoole-bundle': 8093,
+    'symfony-openswoole-bundle': 8093, 'hyperf': 8094,
 }
 ASYNC = {'laravel-spawn', 'symfony-spawn', 'symfony-swoole-coroutine',
-         'nodejs-express', 'nodejs-nestjs', 'nodejs-nextjs', 'symfony-openswoole-bundle'}
+         'nodejs-express', 'nodejs-nestjs', 'nodejs-nextjs', 'symfony-openswoole-bundle', 'hyperf'}
 
 
 def command(args, **kwargs):
@@ -81,17 +84,38 @@ def write_report(output, rows, repeats):
     def spread(items, key):
         vals = [item[key] for item in items]
         return f'{statistics.median(vals):.2f} [{min(vals):.2f}–{max(vals):.2f}]'
+    def resource_columns(items):
+        phases = [item.get('resources', {}).get('measurement', {}) for item in items]
+        def value(key, peak=False):
+            values = [phase.get('application', {}).get(key) for phase in phases]
+            if any(v is None for v in values):
+                return 'N/A'
+            return f'{(max(values) if peak else statistics.median(values)):.2f}'
+        complete = sum(phase.get('complete', False) for phase in phases)
+        status = 'complete' if complete == len(items) else f'incomplete ({complete}/{len(items)})'
+        return (f'{value("cpu_avg_percent")} / {value("cpu_peak_percent", peak=True)} | '
+                f'{value("memory_start_mib")} / {value("memory_end_mib")} / {value("memory_peak_mib", peak=True)} | '
+                f'{value("memory_change_mib")} | {value("memory_slope_mib_per_min")} | {status}')
+
+    lines += ['CPU/RAM columns show application usage, including its proxy. CPU averages, RAM start/end/change '
+              'and slopes are medians across trials; peaks are the maximum across trials. '
+              'Measurement includes request drain. CPU is sample-averaged; 100% is one core. '
+              'RAM uses Docker CLI cache-adjusted accounting.', '',
+              'Growth is diagnostic, not a leak verdict. The late slope requires five samples spanning '
+              '30 seconds in the latter half. Missing values are N/A; incomplete profiles are labelled. '
+              'Raw readings, warmup summaries and errors are retained in each workload directory.', '']
     for mode, title in [('mixed', 'Mixed'), ('async', 'Async'), ('sequential', 'Sequential')]:
         lines += [f'## {title}', '',
-                  '| Target | Offered req/s | Trials | Achieved req/s | P95 ms | Errors (max) | Drops (max) | Passes |',
-                  '|---|---:|---:|---|---|---:|---:|---:|']
+                  '| Target | Offered req/s | Trials | Achieved req/s | P95 ms | Errors (max) | Drops (max) | Passes | CPU avg / peak % | RAM start / end / peak MiB | RAM change MiB | Late slope MiB/min | Profiles |',
+                  '|---|---:|---:|---|---|---:|---:|---:|---|---|---:|---:|---|']
         selected = [(key, items) for key, items in sorted(groups.items()) if key[1] == mode]
         for (target, _, rate), items in selected:
             lines.append(f'| {target} | {rate} | {len(items)} | {spread(items, "rps")} | '
                          f'{spread(items, "p95")} | {max(x["errors"] for x in items):.2%} | '
-                         f'{max(x["dropped"] for x in items)} | {sum(x["passed"] for x in items)}/{len(items)} |')
+                         f'{max(x["dropped"] for x in items)} | {sum(x["passed"] for x in items)}/{len(items)} | '
+                         f'{resource_columns(items)} |')
         if not selected:
-            lines.append('| No trials recorded | — | — | — | — | — | — | — |')
+            lines.append('| No trials recorded | — | — | — | — | — | — | — | — | — | — | — | — |')
         lines.append('')
     warmup_failures = [row for row in rows if row.get('warmup_exit_code') == 99]
     if warmup_failures:
@@ -123,6 +147,158 @@ def write_report(output, rows, repeats):
         lines.append('No sequential or async measurements were recorded.')
     (output / 'results.md').write_text('\n'.join(lines) + '\n')
     (output / 'trials.json').write_text(json.dumps(rows, indent=2) + '\n')
+
+
+def memory_bytes(value):
+    """Parse Docker CLI units without converting missing readings to zero."""
+    match = re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s*(B|kB|KB|MB|GB|TB|KiB|MiB|GiB|TiB)\s*', value)
+    if not match:
+        raise ValueError(f'Invalid Docker memory value: {value!r}')
+    units = {'B': 1, 'kB': 1000, 'KB': 1000, 'MB': 1000**2, 'GB': 1000**3,
+             'TB': 1000**4, 'KiB': 1024, 'MiB': 1024**2, 'GiB': 1024**3, 'TiB': 1024**4}
+    return float(match[1]) * units[match[2]]
+
+
+def resource_sample(raw, containers, elapsed):
+    cid = raw['ID']
+    if cid not in containers:
+        raise ValueError(f'Unknown container ID: {cid}')
+    cpu_text = raw['CPUPerc']
+    if not cpu_text.endswith('%'):
+        raise ValueError('Missing CPU percentage')
+    cpu = float(cpu_text[:-1])
+    used, limit = map(memory_bytes, raw['MemUsage'].split('/'))
+    if not math.isfinite(cpu) or cpu < 0 or limit <= 0:
+        raise ValueError('Invalid CPU or memory limit (container may have stopped)')
+    return dict(container_id=cid, name=raw['Name'], service=containers[cid],
+                elapsed_s=elapsed, cpu_percent=cpu, memory_bytes=used, memory_limit_bytes=limit)
+
+
+def resource_summary(samples):
+    if not samples:
+        return dict(samples=0, cpu_avg_percent=None, cpu_peak_percent=None,
+                    memory_start_mib=None, memory_end_mib=None, memory_peak_mib=None,
+                    memory_change_mib=None, memory_slope_mib_per_min=None)
+    memory = [sample['memory_bytes'] / 1024**2 for sample in samples]
+    cpu = [sample['cpu_percent'] for sample in samples]
+    midpoint = (samples[0]['elapsed_s'] + samples[-1]['elapsed_s']) / 2
+    late = [sample for sample in samples if sample['elapsed_s'] >= midpoint]
+    slope = None
+    # Short measurements cannot establish a meaningful retained-memory trend.
+    if len(late) >= 5 and late[-1]['elapsed_s'] - late[0]['elapsed_s'] >= 30:
+        xs = [sample['elapsed_s'] / 60 for sample in late]
+        ys = [sample['memory_bytes'] / 1024**2 for sample in late]
+        mx, my = statistics.mean(xs), statistics.mean(ys)
+        slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx)**2 for x in xs)
+    return dict(samples=len(samples), cpu_avg_percent=statistics.mean(cpu), cpu_peak_percent=max(cpu),
+                memory_start_mib=memory[0], memory_end_mib=memory[-1], memory_peak_mib=max(memory),
+                memory_change_mib=memory[-1] - memory[0] if len(memory) > 1 else None,
+                memory_slope_mib_per_min=slope)
+
+
+class ResourceProfile:
+    """One Docker stats stream per phase; always persist partial data and stop it."""
+    def __init__(self, trial, folder, phase):
+        self.trial, self.folder, self.phase = trial, folder, phase
+        self.containers, self.samples, self.errors = {}, {'application': [], 'database': []}, []
+        self.process = self.thread = self.log = self.raw = None
+        self.stopping = False
+        self.started = time.monotonic()
+        self.summary = None
+
+    def __enter__(self):
+        try:
+            self.raw = (self.folder / 'resources.jsonl').open('a')
+            self.log = (self.folder / f'resources-{self.phase}.log').open('w')
+            services = ['php', 'nginx', 'db'] if self.trial.target == 'fpm' else ['app', 'db']
+            for service in services:
+                ids = self.trial.compose('ps', '-q', service, capture_output=True, timeout=10).stdout.split()
+                if not ids:
+                    raise RuntimeError(f'No running containers for service {service}')
+                self.containers.update({cid: service for cid in ids})
+            self.started = time.monotonic()
+            self.process = subprocess.Popen(['docker', 'stats', '--no-trunc', '--format', '{{json .}}',
+                                             *self.containers], stdout=subprocess.PIPE, stderr=self.log, text=True)
+            self.thread = threading.Thread(target=self.collect, daemon=True)
+            self.thread.start()
+        except Exception as error:
+            self.errors.append(f'Cannot start profiling: {error}')
+        return self
+
+    def collect(self):
+        pending = {}
+        try:
+            for line in self.process.stdout:
+                # Docker refreshes a terminal display even with redirected JSON output.
+                line = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', line)
+                if not line.strip():
+                    continue
+                elapsed = time.monotonic() - self.started
+                try:
+                    raw = json.loads(line)
+                    sample = resource_sample(raw, self.containers, elapsed)
+                    self.raw.write(json.dumps(dict(phase=self.phase,
+                        timestamp_utc=datetime.now(timezone.utc).isoformat(), raw=raw, **sample)) + '\n')
+                    self.raw.flush()
+                    cid = sample['container_id']
+                    if cid in pending:
+                        self.errors.append('Incomplete stats frame: a container reading is missing')
+                        pending = {}
+                    pending[cid] = sample
+                    if set(pending) == set(self.containers):
+                        for group in self.samples:
+                            members = [s for s in pending.values()
+                                       if (s['service'] == 'db') == (group == 'database')]
+                            self.samples[group].append(dict(elapsed_s=elapsed,
+                                cpu_percent=sum(s['cpu_percent'] for s in members),
+                                memory_bytes=sum(s['memory_bytes'] for s in members)))
+                        pending = {}
+                except (ValueError, KeyError, TypeError) as error:
+                    self.errors.append(f'Invalid resource sample: {error}')
+                    if self.log is not None:
+                        self.log.write(f'Invalid reading: {line.rstrip()}\n')
+                    pending = {}
+            if not self.stopping:
+                self.errors.append('Docker stats exited before the phase finished; see phase log')
+        except Exception as error:
+            self.errors.append(f'Resource collection failed: {error}')
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.stopping = True
+        if self.process is not None:
+            if self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=3)
+            if self.thread is not None:
+                self.thread.join(timeout=3)
+            self.process.stdout.close()
+        ended = time.monotonic() - self.started
+        if exc_type is not None:
+            self.errors.append(f'Phase interrupted: {exc_type.__name__}')
+        for group, samples in self.samples.items():
+            if len(samples) < 2:
+                self.errors.append(f'{group}: fewer than two complete samples')
+            elif (samples[0]['elapsed_s'] > 6 or ended - samples[-1]['elapsed_s'] > 6 or
+                  any(b['elapsed_s'] - a['elapsed_s'] > 6 for a, b in zip(samples, samples[1:]))):
+                self.errors.append(f'{group}: sampling gap greater than six seconds')
+        self.summary = dict(complete=not self.errors, duration_s=ended,
+            containers=self.containers, errors=self.errors,
+            **{group: resource_summary(samples) for group, samples in self.samples.items()})
+        if self.log is not None:
+            self.log.write('\n'.join(self.errors) + '\n')
+            self.log.close()
+        if self.raw is not None:
+            self.raw.close()
+        path = self.folder / 'resource-summary.json'
+        previous = json.loads(path.read_text()) if path.exists() else {}
+        previous[self.phase] = self.summary
+        path.write_text(json.dumps(previous, indent=2) + '\n')
+        # Never suppress the original benchmark error or turn profiler errors into k6 failures.
+        return False
 
 
 class Trial:
@@ -193,6 +369,8 @@ class Trial:
                 time.sleep(1)
         runtime = get_json(self.base + '/debug/runtime')
         (self.directory / 'runtime.json').write_text(json.dumps(runtime, indent=2))
+        if self.target == 'hyperf' and runtime.get('pdo_pgsql_hook') is not True:
+            raise RuntimeError('hyperf: serving workers have PostgreSQL coroutine hooks disabled')
         if not self.target.startswith('nodejs'):
             if not runtime.get('opcache_enabled'):
                 raise RuntimeError(f'{self.target}: serving SAPI has OPcache disabled')
@@ -239,7 +417,7 @@ class Trial:
         env = {**os.environ, 'BASE_URL': self.base, 'MODE': 'async' if mode == 'async' else 'sequential'}
         warmup_summary = folder / 'warmup-summary.json'
         env['SUMMARY_FILE'] = str(warmup_summary)
-        with (folder / 'warmup.log').open('w') as log:
+        with ResourceProfile(self, folder, 'warmup') as warmup_profile, (folder / 'warmup.log').open('w') as log:
             warmup_result = subprocess.run(['k6', 'run', str(ROOT / 'k6/warmup.js')],
                                            env=env, stdout=log, stderr=subprocess.STDOUT)
         if warmup_result.returncode not in (0, 99) or not warmup_summary.exists():
@@ -256,7 +434,7 @@ class Trial:
         summary = folder / 'summary.json'
         env.update(RATE=str(rate), SUMMARY_FILE=str(summary))
         script = 'mixed.js' if mode == 'mixed' else 'bench.js'
-        with (folder / 'k6.log').open('w') as log:
+        with ResourceProfile(self, folder, 'measurement') as profile, (folder / 'k6.log').open('w') as log:
             result = subprocess.run(['k6', 'run', str(ROOT / 'k6' / script)], env=env,
                                     stdout=log, stderr=subprocess.STDOUT)
         if result.returncode not in (0, 99) or not summary.exists():
@@ -270,7 +448,8 @@ class Trial:
             if state != f'100|1000|1000|{expected_updates}':
                 values['passed'] = False
                 values['correctness_error'] = f'Unexpected database totals: {state}'
-        values.update(warmup_exit_code=warmup_result.returncode,
+        values.update(resources={'warmup': warmup_profile.summary, 'measurement': profile.summary},
+                      warmup_exit_code=warmup_result.returncode,
                       warmup_checks=warmup_checks, warmup_errors=warmup_errors)
         values['passed'] = values['passed'] and warmup_passed
         return dict(target=self.target, mode=mode, rate=rate, **values)
@@ -279,7 +458,8 @@ class Trial:
         with (self.directory / 'containers.log').open('w') as log:
             subprocess.run(self.cmd + ['logs', '--no-color'], stdout=log, stderr=subprocess.STDOUT)
             if not self.target.startswith('nodejs'):
-                path = 'var/log' if self.target.startswith('symfony') else 'storage/logs'
+                path = ('runtime/logs' if self.target == 'hyperf' else
+                        'var/log' if self.target.startswith('symfony') else 'storage/logs')
                 subprocess.run(self.cmd + ['cp', f'{self.service}:/app/{path}',
                                           str(self.directory / 'application-logs')],
                                stdout=log, stderr=subprocess.STDOUT)
@@ -322,6 +502,8 @@ def main():
                 'WARMUP_VUS', 'WARMUP_DURATION', 'APP_CPUS', 'APP_MEMORY_MB', 'DB_CPUS', 'DB_MEMORY'] if k in os.environ}
     manifest = dict(created_utc=stamp, host=platform.platform(), cpus=os.cpu_count(),
                     repeats=repeats, rates=rates, mixed_rates=mixed_rates, order_seed=seed, plan=plan, overrides=settings,
+                    resource_profiling=dict(source='docker stats', cpu_unit='100% = one CPU core',
+                        memory='Linux cache-adjusted Docker CLI usage', measurement_includes_drain=True),
                     fixture_sha256=hashlib.sha256((ROOT / 'benchmark/schema.sql').read_bytes() +
                                                   (ROOT / 'benchmark/reset.sql').read_bytes()).hexdigest())
     for name, args in [('k6', ['k6', 'version']), ('docker', ['docker', 'version']),

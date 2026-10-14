@@ -11,12 +11,9 @@ use OpenSwoole\Coroutine\PostgreSQLStatement;
 class DbPool
 {
     private ClientPool $pool;
-    /** @var \WeakMap<PostgreSQL, array<string, PostgreSQLStatement>> */
-    private \WeakMap $statements;
 
     public function __construct(int $maxSize = 10)
     {
-        $this->statements = new \WeakMap();
         $config = (new PostgresConfig())
             ->withHost(getenv('DB_HOST'))
             ->withPort((int) getenv('DB_PORT'))
@@ -56,24 +53,36 @@ class DbPool
     private function fetchAssoc(PostgreSQL $pg, string $sql, array $params): array|false
     {
         $stmt = $this->execute($pg, $sql, $params);
-        return $stmt->fetchAssoc();
+        try {
+            return $stmt->fetchAssoc();
+        } finally {
+            // Destroy the result while this physical connection is still checked out.
+            unset($stmt);
+        }
     }
 
     private function fetchAll(PostgreSQL $pg, string $sql, array $params): array
     {
         $stmt = $this->execute($pg, $sql, $params);
-        $rows = $stmt->fetchAll();
-        if ($rows === false) {
-            throw new \RuntimeException('PostgreSQL result fetch failed');
+        try {
+            $rows = $stmt->fetchAll();
+            if ($rows === false) {
+                throw new \RuntimeException('PostgreSQL result fetch failed');
+            }
+            return $rows;
+        } finally {
+            unset($stmt);
         }
-
-        return $rows;
     }
 
     private function affectedRows(PostgreSQL $pg, string $sql, array $params): int
     {
         $stmt = $this->execute($pg, $sql, $params);
-        return $stmt->affectedRows();
+        try {
+            return $stmt->affectedRows();
+        } finally {
+            unset($stmt);
+        }
     }
 
     private function execute(PostgreSQL $pg, string $sql, array $params): PostgreSQLStatement
@@ -87,22 +96,14 @@ class DbPool
             return $stmt;
         }
 
-        // The pool lends each client exclusively until rows have been fetched.
-        // Named statements belong to that physical connection, so cache them
-        // per client, never globally by SQL alone.
-        $prepared = $this->statements[$pg] ?? [];
-        $stmt = $prepared[$sql] ?? null;
-        if ($stmt === null) {
-            $stmt = $pg->prepare(self::withNamedParams($sql));
-            if ($stmt === false) {
-                throw new \RuntimeException('PostgreSQL statement preparation failed');
-            }
-            $prepared[$sql] = $stmt;
-            $this->statements[$pg] = $prepared;
+        // OpenSwoole 26.2 overwrites the previous PGresult on execute() reuse
+        // without freeing it. Prepare once per operation and let destruction free
+        // its result and DEALLOCATE before the connection returns to the pool.
+        $stmt = $pg->prepare(self::withNamedParams($sql));
+        if ($stmt === false) {
+            throw new \RuntimeException('PostgreSQL statement preparation failed');
         }
         if (!$stmt->execute($params)) {
-            unset($prepared[$sql]);
-            $this->statements[$pg] = $prepared;
             throw new \RuntimeException('PostgreSQL statement execution failed');
         }
 

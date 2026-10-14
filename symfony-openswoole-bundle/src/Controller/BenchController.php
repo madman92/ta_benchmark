@@ -54,7 +54,7 @@ class BenchController
         $otherUserId = ($userId % 100) + 1;
 
         // SQL and read/write phases match; sequential uses Doctrine/PDO,
-        // while async uses the native coroutine client and cached statements.
+        // while async uses the native coroutine client and per-operation statements.
         $db = $parallel ? $this->dbPool : $this->connection;
         [$user, $posts, $topPosts, $leaderboard, $otherUser, $otherPosts, $recentViews] = $this->runQueries([
             fn() => $db->fetchAssociative('SELECT id, name, email FROM users WHERE id = ?', [$userId]),

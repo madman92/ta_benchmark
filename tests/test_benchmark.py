@@ -29,9 +29,9 @@ class ContractTests(unittest.TestCase):
     def test_every_adapter_uses_same_ten_queries_in_same_order(self):
         files = (list(ROOT.glob('*/app/Http/Controllers/BenchmarkController.php')) +
                  list(ROOT.glob('*/src/Controller/BenchController.php')) +
-                 [ROOT / 'nodejs-express/server.js',
+                 [ROOT / 'hyperf/app/Controller/BenchController.php', ROOT / 'nodejs-express/server.js',
                   ROOT / 'nodejs-nestjs/src/bench/bench.service.ts', ROOT / 'nodejs-nextjs/lib/bench.ts'])
-        self.assertEqual(len(files), 11)
+        self.assertEqual(len(files), 12)
         reference = None
         for file in files:
             text = file.read_text()

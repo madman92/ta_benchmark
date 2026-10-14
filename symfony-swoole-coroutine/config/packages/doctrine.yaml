@@ -9,6 +9,8 @@ doctrine:
         server_version: '17'
         use_savepoints: true
         persistent: false
+        logging: false
+        profiling: false
     orm:
         auto_generate_proxy_classes: true
         enable_native_lazy_objects: true

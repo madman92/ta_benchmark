@@ -14,12 +14,12 @@ $scheduler->add(function () {
     foreach ([10, 20, 30] as $value) {
         $row = $pool->fetchAssociative('SELECT ?::integer AS value', [$value]);
         if ((int) $row['value'] !== $value) {
-            throw new RuntimeException('Reused statement returned stale parameters');
+            throw new RuntimeException('Statement returned incorrect parameters');
         }
     }
     $row = $pool->fetchAssociative('SELECT count(*) AS count FROM pg_prepared_statements');
-    if ((int) $row['count'] !== 1) {
-        throw new RuntimeException('Same SQL was prepared more than once on one client');
+    if ((int) $row['count'] !== 0) {
+        throw new RuntimeException('Prepared statements were retained after returning a connection');
     }
     try {
         $pool->fetchAssociative('SELECT ?::integer AS value', ['invalid integer']);
@@ -80,6 +80,31 @@ $scheduler->add(function () {
         throw new RuntimeException('Batch result order or empty batch changed');
     }
 
-    echo "DbPool regression passed: statement reuse, parallelism, connection cap and safe batch errors.\n";
+    // A reused native statement leaked about 72 MiB for 20k executions in 26.2.
+    // Measure anonymous process memory, since PHP heap accounting misses libpq.
+    $pool = new DbPool(1);
+    for ($i = 0; $i < 200; $i++) {
+        $pool->fetchAssociative('SELECT ?::integer AS value', [$i]);
+    }
+    $anonymousKiB = static function (): int {
+        if (!preg_match('/^RssAnon:\s+(\d+)/m', file_get_contents('/proc/self/status'), $match)) {
+            throw new RuntimeException('Anonymous process memory reading unavailable');
+        }
+        return (int) $match[1];
+    };
+    $before = $anonymousKiB();
+    for ($i = 0; $i < 20000; $i++) {
+        if ((int) $pool->fetchAssociative('SELECT ?::integer AS value', [$i])['value'] !== $i) {
+            throw new RuntimeException('Repeated parameterized query returned incorrect value');
+        }
+    }
+    $growth = $anonymousKiB() - $before;
+    if ($growth > 16 * 1024) {
+        throw new RuntimeException("Native statement memory grew by {$growth} KiB");
+    }
+    if ((int) $pool->fetchAssociative('SELECT count(*) AS count FROM pg_prepared_statements')['count'] !== 0) {
+        throw new RuntimeException('Prepared statements accumulated during repeated execution');
+    }
+    echo "DbPool regression passed: statement cleanup, parallelism, connection cap, safe batch errors; native memory growth {$growth} KiB.\n";
 });
 $scheduler->start();

@@ -29,6 +29,7 @@ Laravel TrueAsync uses an explicit FrankenPHP configuration with ten request que
 | symfony-swoole | 8087 | PHP 8.5 Swoole | No |
 | symfony-swoole-coroutine | 8088 | PHP 8.5 OpenSwoole, silpo-tech bundle | Yes |
 | symfony-openswoole-bundle | 8093 | PHP 8.5 OpenSwoole, symfony-swoole bundle | Yes |
+| hyperf | 8094 | PHP 8.5 Swoole, Hyperf 3.1 | Yes |
 | nodejs-nestjs | 8091 | Node 24 | Yes |
 | nodejs-nextjs | 8092 | Node 24, 16 instances behind a local proxy | Yes |
 
@@ -51,7 +52,7 @@ REPEATS=1 RATES=20 DURATION=3s WARMUP_DURATION=2s WARMUP_VUS=32 VUS=100 \
   ./run_all_benches.sh fpm nodejs-nestjs
 ```
 
-The default is a single-repeat comparison: 26 measurements across 10 targets, about **15 minutes 10 seconds** of warmup and measurement plus build, startup and drain time. It does not establish repeat-based confidence. Use existing environment variables for longer runs; there are no profiles.
+The default is a single-repeat comparison: 29 measurements across 11 targets, about **16 minutes 55 seconds** of warmup and measurement plus build, startup and drain time. It does not establish repeat-based confidence. Use existing environment variables for longer runs; there are no profiles.
 
 To investigate mixed capacity, use `MIXED_RATES="3000 4000 6000" ./run_all_benches.sh`; this adds mixed measurements while keeping database benchmark rates unchanged.
 
@@ -89,7 +90,29 @@ The current defaults use sixteen workers and a four-CPU PostgreSQL budget. Histo
 
 The reported highest passing rate must pass **every repeat**. It is a tested lower bound, not maximum capacity. Extend `RATES` if every offered rate passes. A value around 1,000 req/s at a 1,000 req/s offered rate cannot establish a winner.
 
-Worker recycling is disabled for Symfony Swoole/OpenSwoole and effectively disabled for Octane using a billion-request limit. Image IDs and serving PHP/Node versions are recorded because floating image tags can change. PHP heap and Node heap statistics have been removed from benchmark responses; they are not comparable memory measurements. Use container-level instrumentation for a separate memory study.
+Worker recycling is disabled for Symfony Swoole/OpenSwoole and effectively disabled for Octane using a billion-request limit. Image IDs and serving PHP/Node versions are recorded because floating image tags can change. PHP heap and Node heap statistics have been removed from benchmark responses; they are not comparable memory measurements. The runner now records container CPU/RAM during warmup and each measurement; use longer measurements for memory-growth investigation.
+
+## CPU/RAM profiling
+
+Profiling is enabled for every target. One streaming `docker stats` process records the selected application containers and PostgreSQL during each warmup and measurement. Collection follows Docker CLI's native refresh interval; every reading has an actual timestamp. FPM's application totals include both PHP and nginx. Database readings are retained in the raw profiling files; the report shows only application usage. Startup, fixture reset and container restarts are outside these phases; measurement includes request drain.
+
+Each workload directory retains:
+
+- `resources.jsonl`: timestamped, phase-tagged per-container CPU percentage, RAM usage/limit, service and container identity, plus the original Docker reading.
+- `resource-summary.json`: separate warmup and measurement summaries, sample counts, collection status and errors.
+- `resources-warmup.log` and `resources-measurement.log`: Docker diagnostics and profiling errors.
+
+`results.md` adds application CPU/RAM columns directly to each workload row, without separate resource or database rows. Average CPU, first/last RAM, RAM change and late memory slope use medians across repeats; peaks use the maximum. `trials.json` retains the full per-trial application and database summaries. CPU is sample-averaged and 100% represents one core, so a four-core application can exceed 100%. RAM uses the [Docker CLI's Linux cache-adjusted accounting](https://docs.docker.com/reference/cli/docker/container/stats/), with Docker's display rounding; it is not PHP heap usage or process RSS. First/last RAM values refer to collected readings rather than the exact start/end instant.
+
+The slope requires at least five readings over at least 30 seconds in the latter half; short trials show `N/A`. RAM growth is diagnostic evidence, not a confirmed leak: worker allocations, caches and concurrent requests can also increase RAM. Missing values remain unavailable. Collection errors, sampling gaps over six seconds, or fewer than two complete frames mark the phase incomplete while preserving request-performance results. Monitoring stops on normal completion, failures and cancellation. Inspect the raw time series and repeat longer runs at a sustainable offered rate before drawing memory-leak conclusions.
+
+For example, a longer run restricted to one target (not part of the default suite):
+
+```bash
+DURATION=10m RATES=100 MIXED_RATES=100 ./run_all_benches.sh symfony-swoole
+```
+
+Workers remain alive within each measurement and restart between workloads. There is no additional soak profile or automatic leak threshold.
 
 ## Manual endpoint testing
 
@@ -117,7 +140,7 @@ bash -n run_all_benches.sh bench.sh
 k6 inspect k6/bench.js
 ```
 
-With an OpenSwoole app and its database already started, check native statement reuse, parallel execution, connection caps, recovery after a query error, and child-error propagation:
+With an OpenSwoole app and its database already started, check native statement cleanup, bounded memory over 20,000 parameterized executions, parallel execution, connection caps, recovery after a query error, and child-error propagation:
 
 ```bash
 docker compose -f symfony-openswoole-bundle/compose.yml run --rm --no-deps \
@@ -127,16 +150,31 @@ docker compose -f symfony-openswoole-bundle/compose.yml run --rm --no-deps \
 
 The same check works with `symfony-swoole-coroutine/compose.yml`.
 
+With Hyperf and its database already running, verify PostgreSQL query overlap, coroutine isolation, pool limits, checkout/release and recovery after a child query error:
+
+```bash
+docker compose -f hyperf/compose.yml run --rm --no-deps \
+  --entrypoint php -v "$PWD/tests/check_hyperf_pool.php:/tmp/check-hyperf-pool.php:ro" \
+  app /tmp/check-hyperf-pool.php
+```
+
 `RESULTS.md` and `benchmark_results.md` contain historical results from earlier workloads/configurations. New runs are deliberately written elsewhere.
 
 ## Swoole comparison
 
 `./run_all_benches.sh octane_swoole symfony-swoole symfony-swoole-coroutine symfony-openswoole-bundle` compares the four Swoole deployments with the same fixture, offered rates and resource budgets. The new target uses [symfony-swoole/swoole-bundle](https://github.com/symfony-swoole/swoole-bundle) 0.35.3 with OpenSwoole 26.2, coroutine service isolation and a ten-connection native PostgreSQL pool per worker. It retains the same sequential and async SQL workloads. Its `/test` uses a coroutine-isolated Doctrine connection, provided by resetter-bundle 2.1.1. This is a comparison of complete deployments and integrations, not just the server extension.
 
-Both Symfony OpenSwoole adapters use Doctrine DBAL/PDO for sequential `/bench`, matching `symfony-swoole` and its default `ATTR_DISABLE_PREPARES` behavior. Async `/bench-async` uses `DbPool` with the native coroutine PostgreSQL client and a maximum of ten connections per worker. Parameterized statements are prepared once per SQL per physical client and reused with new bound parameters; this remains named prepared execution, rather than PDO's unnamed parameterized execution. All ten SQL operations and their read/write phases remain the same. Sequential/async comparisons therefore include a driver difference as well as scheduling. PDO PostgreSQL blocks the worker in the current OpenSwoole image.
+Both Symfony OpenSwoole adapters use Doctrine DBAL/PDO for sequential `/bench`, matching `symfony-swoole` and its default `ATTR_DISABLE_PREPARES` behavior. DBAL query logging and profiling are disabled. The temporary Doctrine ORM workload has been removed; its saved results remain historical experiments. Async `/bench-async` uses `DbPool` with the native coroutine PostgreSQL client and a maximum of ten connections per worker. Parameterized statements are prepared, executed and destroyed per operation, before returning the physical connection to the pool. This avoids an OpenSwoole 26.2 native result leak when a prepared statement is executed repeatedly. Destruction frees the current result and deallocates the server statement. This adds prepare/deallocate round trips and differs from both the former cached-statement runs and PDO's unnamed parameterized execution. All ten SQL operations and their read/write phases remain the same. Sequential/async comparisons therefore include a driver difference as well as scheduling. PDO PostgreSQL blocks the worker in the current OpenSwoole image.
 
 The native `DbPool` uses OpenSwoole Core's `ClientPool` with a maximum of ten clients per worker and retains its default connection/checkout behavior. The controller's existing `runQueries()` wraps tasks with error capture and uses the standard OpenSwoole `batch()`. After all tasks finish, it rethrows any captured error in the request coroutine so Symfony can handle the failure without terminating the worker.
 
-Updated package versions are recorded in [benchmark/DEPENDENCIES.md](benchmark/DEPENDENCIES.md).
+## Hyperf
+
+`./run_all_benches.sh hyperf` selects only Hyperf. The app listens on port 8094; its dedicated PostgreSQL port is 5443. `bench.sh` continues to select the three Symfony Swoole variants.
+
+Hyperf uses locked 3.1 packages, sixteen PHP 8.5/Swoole workers, disabled worker recycling and the same shared fixture and budgets. Both database workloads execute the identical raw parameterized SQL through Hyperf's coroutine-local PostgreSQL PDO connections, capped at ten per worker. The async workload joins seven concurrent reads, then two concurrent writes, then the aggregate. Hyperf releases child connections on coroutine exit and propagates errors after joining every task.
+
+Startup requires Swoole compiled with PostgreSQL coroutine support, the `pdo_pgsql` driver and an enabled `SWOOLE_HOOK_PDO_PGSQL` flag. It fails explicitly when these requirements are missing. Serving runtime details record the Hyperf/Swoole versions, hook flag, pool size and worker count. Application logs are retained from `runtime/logs`. The runtime image tag is shared with Symfony Swoole; its resolved image ID and serving versions are recorded because floating tags can change.
+
 
 Laravel Spawn creates one shared PDO template per worker with TrueAsync's native pool enabled (`PDO::ATTR_POOL_ENABLED`, maximum ten connections). The Laravel connection wrapper uses that same PDO for reads and writes, including concurrent child operations. Physical connection checkout and return are handled by TrueAsync; no application-level pool is used. The template is created before HTTP handling with `POOL_MIN=0`, so connections open lazily after FrankenPHP starts its scheduler. See the [TrueAsync PDO Pool documentation](https://true-async.github.io/en/docs/components/pdo-pool.html#binding-connections-to-coroutines).

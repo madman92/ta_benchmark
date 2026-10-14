@@ -1,0 +1,32 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: php bin/hyperf.php start
+    ports:
+      - "8094:8080"
+    environment:
+      APP_ENV: prod
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: hyperf
+      DB_USER: hyperf
+      DB_PASSWORD: secret
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: postgres:17-alpine
+    command: postgres -c max_connections=500
+    environment:
+      POSTGRES_DB: hyperf
+      POSTGRES_USER: hyperf
+      POSTGRES_PASSWORD: secret
+    ports:
+      - "5443:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U hyperf -d hyperf"]
+      interval: 3s
+      timeout: 3s
+      retries: 10

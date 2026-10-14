@@ -3,4 +3,4 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 export DURATION="${1:-30}s"
-exec ./run_all_benches.sh laravel-spawn octane_swoole
+exec ./run_all_benches.sh symfony-swoole symfony-openswoole-bundle symfony-swoole-coroutine
