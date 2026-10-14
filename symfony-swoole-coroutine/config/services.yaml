@@ -12,3 +12,5 @@ services:
         arguments:
             # 16 workers x 10 connections leaves room for DBAL and administration.
             $maxSize: 10
+            $waitTimeout: 1.0
+            $statementTimeoutMs: 5000

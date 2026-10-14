@@ -93,7 +93,24 @@ class BenchController
     private function runQueries(array $queries, bool $parallel): array
     {
         if ($parallel) {
-            return batch($queries);
+            $error = null;
+            $tasks = [];
+            foreach ($queries as $key => $query) {
+                $tasks[$key] = static function () use ($query, &$error) {
+                    try {
+                        return $query();
+                    } catch (\Throwable $caught) {
+                        $error ??= $caught;
+                        return null;
+                    }
+                };
+            }
+            // Let batch join every child before throwing in the request coroutine.
+            $results = batch($tasks);
+            if ($error !== null) {
+                throw $error;
+            }
+            return $results;
         }
         $results = [];
         foreach ($queries as $query) {
