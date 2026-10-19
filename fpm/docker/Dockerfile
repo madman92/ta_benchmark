@@ -2,8 +2,10 @@ FROM composer:latest AS composer
 
 FROM php:8.5-fpm-alpine
 
+# The base image enables access logging; match the other benchmark servers.
 RUN apk add --no-cache postgresql-dev \
-    && docker-php-ext-install pdo_pgsql
+    && docker-php-ext-install pdo_pgsql \
+    && sed -i '/^[[:space:]]*access[.]log[[:space:]]*=/d' /usr/local/etc/php-fpm.d/docker.conf
 
 COPY --from=composer /usr/bin/composer /usr/local/bin/composer
 

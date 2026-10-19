@@ -27,9 +27,4 @@
             }
         }
     }
-
-    log {
-        output file /app/storage/logs/frankenphp-access.log
-        level INFO
-    }
 }

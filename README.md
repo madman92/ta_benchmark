@@ -92,6 +92,8 @@ The reported highest passing rate must pass **every repeat**. It is a tested low
 
 Worker recycling is disabled for Symfony Swoole/OpenSwoole and effectively disabled for Octane using a billion-request limit. Image IDs and serving PHP/Node versions are recorded because floating image tags can change. PHP heap and Node heap statistics have been removed from benchmark responses; they are not comparable memory measurements. The runner now records container CPU/RAM during warmup and each measurement; use longer measurements for memory-growth investigation.
 
+Successful-request access logging is disabled, including Laravel Spawn's Caddy server and FPM's nginx/PHP-FPM layers, to avoid adding request-log encoding and writes to only some targets. Runtime and error diagnostics remain available.
+
 ## CPU/RAM profiling
 
 Profiling is enabled for every target. One streaming `docker stats` process records the selected application containers and PostgreSQL during each warmup and measurement. Collection follows Docker CLI's native refresh interval; every reading has an actual timestamp. FPM's application totals include both PHP and nginx. Database readings are retained in the raw profiling files; the report shows only application usage. Startup, fixture reset and container restarts are outside these phases; measurement includes request drain.
@@ -134,11 +136,16 @@ The compatibility scripts such as `k6/fpm.js` use the same mixed workload with t
 
 ## Checks
 
+For the complete local suite, install PHP CLI 8.5+, Node.js and k6, then install the locked NestJS development dependencies (the execution checks use its TypeScript compiler):
+
 ```bash
+npm ci --prefix nodejs-nestjs
 python3 -m unittest discover -s tests -v
 bash -n run_all_benches.sh bench.sh
 k6 inspect k6/bench.js
 ```
+
+The suite lints PHP application/test sources and executes all twelve controllers with tracing database doubles. It checks the ten executed SQL operations and their parameters, sequential order, async read/write overlap and phase barriers, response contents, and the `/test` sleep query. Mutation checks reject reordered/skipped operations and serialized async execution. PHP/Node checks are explicitly skipped when their local runtimes/dependencies are missing; inspect the test summary before treating a run as complete. These doubles test controller behavior, not native driver or database concurrency; use the container checks below for those integrations.
 
 With an OpenSwoole app and its database already started, check native statement cleanup, bounded memory over 20,000 parameterized executions, parallel execution, connection caps, recovery after a query error, and child-error propagation:
 

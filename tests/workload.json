@@ -1,0 +1,12 @@
+[
+  "SELECT id, name, email FROM users WHERE id = ?",
+  "SELECT id, title, views_count FROM posts WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 10",
+  "SELECT id, title, views_count FROM posts ORDER BY views_count DESC, id DESC LIMIT 5",
+  "SELECT user_id, COUNT(*) as post_count FROM posts GROUP BY user_id ORDER BY post_count DESC, user_id ASC LIMIT 5",
+  "SELECT id, name, email FROM users WHERE id = ?",
+  "SELECT id, title FROM posts WHERE user_id = ? ORDER BY id LIMIT 5",
+  "SELECT post_id, ip_address, viewed_at FROM post_views ORDER BY viewed_at DESC, id DESC LIMIT 10",
+  "UPDATE post_views SET ip_address = ?, viewed_at = NOW() WHERE id = ?",
+  "UPDATE posts SET views_count = views_count + 1 WHERE id = ?",
+  "SELECT COUNT(*) as total_views, MAX(viewed_at) as last_view FROM post_views WHERE post_id = ?"
+]

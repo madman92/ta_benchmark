@@ -4,6 +4,8 @@ The harness now uses a shared SQL schema and deterministic bounded fixture, a co
 
 The runner uses concurrent warmup, fixture reset between measurements, shuffled repeated trials, multiple offered rates, equal total app/database resource budgets, serving-SAPI OPcache checks, and retained raw summaries/runtime metadata. Reports include variability and only label rates passing every repeat as a tested lower bound. Historical results remain separate.
 
+Successful-request access logging is disabled, including the inherited PHP-FPM access log and nginx logging. Local regression checks lint PHP sources and execute all twelve controllers with tracing database doubles to verify actual query order, parameters and async phase scheduling. Mutation checks prove reordered/skipped work and serialized async execution are rejected. Native database and pool overlap still require the separate container checks documented in README.md.
+
 Remaining interpretation limits:
 
 - TrueAsync uses PHP 8.6; other PHP deployments use 8.5. These are deployment comparisons rather than isolated adapter measurements.

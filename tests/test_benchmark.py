@@ -26,13 +26,14 @@ class ContractTests(unittest.TestCase):
                 self.assertEqual(events, [('stop', '-t', '10', *services), ('reset',),
                                           ('start', *services), ('ready',)])
 
-    def test_every_adapter_uses_same_ten_queries_in_same_order(self):
+    def test_every_adapter_declares_the_common_sql_workload(self):
         files = (list(ROOT.glob('*/app/Http/Controllers/BenchmarkController.php')) +
                  list(ROOT.glob('*/src/Controller/BenchController.php')) +
                  [ROOT / 'hyperf/app/Controller/BenchController.php', ROOT / 'nodejs-express/server.js',
                   ROOT / 'nodejs-nestjs/src/bench/bench.service.ts', ROOT / 'nodejs-nextjs/lib/bench.ts'])
         self.assertEqual(len(files), 12)
-        reference = None
+        reference = [' '.join(q.lower().split()) for q in
+                     json.loads((ROOT / 'tests/workload.json').read_text())]
         for file in files:
             text = file.read_text()
             if file.suffix == '.php':
@@ -45,8 +46,6 @@ class ContractTests(unittest.TestCase):
             queries = [' '.join(re.sub(r'\$\d+', '?', q).lower().split()) for q in queries]
             self.assertEqual(len(queries), 10, file)
             self.assertFalse(any(q.startswith('insert') for q in queries), file)
-            if reference is None:
-                reference = queries
             self.assertEqual(queries, reference, file)
 
     def test_response_contract_rejects_old_or_incomplete_work(self):
